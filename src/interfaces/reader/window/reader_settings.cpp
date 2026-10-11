@@ -83,6 +83,8 @@ void Reader::openSettings() {
     denseGraphOption->setChecked(preferences.value("dense_stats_chart").toBool(false));
     pinStatsOption->setChecked(preferences.value("pin_stats").toBool(false));
     heavierTextOption->setChecked(preferences.value("heavier_interface_text").toBool(true));
+    if (hardcoverOption)
+        hardcoverOption->setChecked(preferences.value("hardcover_progress_sync").toBool(false));
     screenRefreshMode = kobalt::screenRefresh(preferences.value("screen_refresh").toString());
     showScreenRefresh();
     fitSettings();
@@ -126,6 +128,8 @@ void Reader::applySettings() {
     next["dense_stats_chart"] = denseGraphOption->isChecked();
     next["pin_stats"] = pinStatsOption->isChecked();
     next["heavier_interface_text"] = heavierTextOption->isChecked();
+    if (hardcoverOption)
+        next["hardcover_progress_sync"] = hardcoverOption->isChecked();
     next["screen_refresh"] = kobalt::screenRefreshValue(screenRefreshMode);
     if (services.desktopUi) {
         next["native_hide_status_bar"] = hideStatusOption->isChecked();
@@ -212,6 +216,22 @@ void Reader::applyDarkMode(bool enabled) {
 
 // Like dark mode, the text weight changes as soon as it is chosen, so the
 // two weights can be compared with Settings open.
+void Reader::applyHardcoverSync(bool enabled) {
+    if (!hardcoverOption || model->temporaryTypography())
+        return;
+    auto next = preferences;
+    next["hardcover_progress_sync"] = enabled;
+    if (!writePreferences(next)) {
+        hardcoverOption->setChecked(preferences.value("hardcover_progress_sync").toBool(false));
+        settingsError->setText(strings::get("reader.could_not_save_reader_settings"));
+        settingsError->show();
+        return;
+    }
+    preferences = next;
+    settingsError->clear();
+    settingsError->hide();
+}
+
 void Reader::applyHeavierText(bool enabled) {
     if (model->temporaryTypography())
         return;

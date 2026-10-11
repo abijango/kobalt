@@ -141,6 +141,11 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
     heavierTextOption = check(advancedPage, "rrHeavierText", strings::get("reader.heavier_interface_text"),
                               strings::get("settings.heavier_interface_text_description"));
     advancedRows->addWidget(heavierTextOption);
+    if (inputs.hardcoverSync) {
+        hardcoverOption = check(advancedPage, "rrHardcoverSync", strings::get("settings.hardcover_sync"),
+                                strings::get("settings.hardcover_sync_description"));
+        advancedRows->addWidget(hardcoverOption);
+    }
     auto *resetRow = kobalt::ui::horizontalRow();
     advancedRows->addLayout(resetRow);
     resetRow->addStretch(1);
@@ -314,6 +319,8 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
     QVector<ui::DescribedOption *> options = {linkIndicatorOption, darkOption,    progressOption,  bionicOption,
                                               animationOption,     smoothOption,  edgeLightOption, heavierTextOption,
                                               denseGraphOption,    pinStatsOption};
+    if (hardcoverOption)
+        options.append(hardcoverOption);
     if (inputs.desktopUi)
         options << hideStatusOption << hideDeviceOptionsOption;
     for (auto *option : options) {

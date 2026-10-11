@@ -162,9 +162,13 @@ void NativeLifecycle::resumed() {
             wake();
     });
 }
+void NativeLifecycle::deferSuspend(bool defer) {
+    if (active)
+        active->suspendDeferred = defer;
+}
 bool NativeLifecycle::canSuspend() {
-    return !active ||
-           (!active->draining && !active->usbPending && !active->poweringOff && engineActivity().quiescent());
+    return !active || (!active->suspendDeferred && !active->draining && !active->usbPending && !active->poweringOff &&
+                       engineActivity().quiescent());
 }
 bool NativeLifecycle::interceptShutdown(QObject *manager, Shutdown mode) {
     if (!active || !active->prepareShutdown)

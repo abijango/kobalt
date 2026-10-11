@@ -66,8 +66,16 @@ public:
         return reconciliation.candidate();
     }
     void acknowledge(const ReadingProgress &shown, bool moved);
+    // Sleep updates Nickel even after the power manager reports sleeping.
+    // USB and an unresolved sync conflict still refuse the write.
+    enum class NativeWrite { Ordinary, Sleep };
     // False leaves a sync conflict pending for the window to resolve.
-    bool writeNative(const QString &location, const QString &mappingError);
+    bool writeNative(const QString &location, const QString &mappingError, NativeWrite mode = NativeWrite::Ordinary);
+    // True after this call stored a verified or time-only native percent.
+    bool wroteNativeProgress() const;
+    int nativePercent() const {
+        return lastNativePercent;
+    }
     bool checkpoint(QJsonObject *snapshot);
     const QJsonObject &layoutPreferences() const {
         return layoutPreferences_;
@@ -92,6 +100,7 @@ private:
     qint64 completedReadingMilliseconds = 0;
     ReadingPace pace_;
     QString nativeWriteback = "not-attempted", nativeWritebackError, acceptedFinishedAnchor;
+    int lastNativePercent = -1;
     // The last checkpoint that reached storage. An identical one is not written again.
     QJsonObject savedCheckpoint, layoutPreferences_;
     QString dictionaryChoice_;

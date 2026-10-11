@@ -36,6 +36,9 @@ public:
     bool draining = false;
     std::function<void()> sleep, sleepViewReady, wake, beforeWake, cancelWake;
     static void finishSleepView();
+    // Hold suspend while a sleep-time native progress write is still running.
+    // A queued Hardcover update must not use this.
+    static void deferSuspend(bool defer);
     std::function<void(std::function<void()>)> prepareUsb;
     std::function<void(std::function<void()>)> prepareShutdown;
     static void disconnected();
@@ -58,6 +61,7 @@ private slots:
 
 private:
     bool connected_ = false, asleep = false, usbPending = false, exported = false, poweringOff = false;
+    bool suspendDeferred = false;
     bool storageReady = false, remounting = false;
     QPointer<QObject> pendingGadget;
     void finishUsb();

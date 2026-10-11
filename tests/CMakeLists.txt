@@ -127,6 +127,10 @@ kobalt_check(image-damage SOURCES tests/model/image_damage.cpp LIBRARIES Qt6::Gu
 kobalt_check(page-pixels SOURCES tests/model/page_pixels.cpp LIBRARIES Qt6::Gui)
 kobalt_check(qt-compat SOURCES tests/model/qt_compat.cpp LIBRARIES Qt6::Core)
 kobalt_check(appearance-settings SOURCES tests/model/appearance_settings.cpp src/reading/appearance_settings.cpp LIBRARIES Qt6::Core)
+kobalt_check(hardcover-sync SOURCES tests/model/hardcover_sync.cpp
+    src/platform/nickel/common/hardcover_sync.cpp src/platform/nickel/common/hardcover_sync.h
+    src/storage/reader_storage.cpp src/support/diagnostics.cpp
+    LIBRARIES Qt6::Core ${CMAKE_DL_LIBS})
 kobalt_check(font-data SOURCES tests/model/font_data.cpp src/interfaces/reader/ui/style/font_data.cpp LIBRARIES Qt6::Gui
     DEFINITIONS KOBALT_FONT_DIRECTORY="${KOBALT_ROOT}/resources/fonts")
 kobalt_check(image-policy SOURCES tests/model/image_policy.cpp src/publication/image_policy.cpp

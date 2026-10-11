@@ -1,4 +1,5 @@
 #include "reader_host_services.h"
+#include "hardcover_sync.h"
 #include "native_dictionary.h"
 #include "native_keyboard.h"
 #include "native_lifecycle.h"
@@ -155,6 +156,10 @@ ReaderHostServices readerHostServices() {
 #ifndef KOBALT_READER_HARDWARE
     result.debugProgressAction = NativeProgress::testAction;
 #endif
+    result.reportReadingProgress = [](const QString &contentId, int percent) {
+        if (auto *sync = HardcoverSync::installed())
+            sync->note(contentId, percent);
+    };
     return result;
 }
 }

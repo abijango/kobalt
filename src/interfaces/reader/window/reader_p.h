@@ -141,7 +141,7 @@ private:
     QCheckBox *darkOption, *smoothOption, *progressOption, *animationOption, *edgeLightOption, *denseGraphOption,
         *pinStatsOption, *heavierTextOption;
     QPushButton *autoRotateOption, *clockOption, *clockHideOption;
-    QCheckBox *hideStatusOption = nullptr, *hideDeviceOptionsOption = nullptr;
+    QCheckBox *hideStatusOption = nullptr, *hideDeviceOptionsOption = nullptr, *hardcoverOption = nullptr;
     bool hideNativeStatus() const;
     QJsonObject preferences;
     QLabel *settingsError;
@@ -308,6 +308,10 @@ private:
     bool recordedOpening = false;
     void recordOpening();
     void finishExit();
+    void reportNativeProgress(const char *reason);
+    void exportSleepProgress();
+    void applyHardcoverSync(bool enabled);
+    bool sleepExportPending = false;
     void saveSoon();
     void save(bool snapshot = false);
 };

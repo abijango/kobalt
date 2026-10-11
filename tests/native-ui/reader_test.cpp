@@ -690,6 +690,13 @@ private slots:
         auto *supported = new reader::SettingsPanel(&owner, inputs);
         QVERIFY(supported->animationOption->isEnabled());
         QVERIFY(supported->edgeLightOption->isEnabled());
+        inputs.hardcoverSync = true;
+        auto *hardcover = new reader::SettingsPanel(&owner, inputs);
+        QVERIFY(hardcover->hardcoverOption);
+        QCOMPARE(hardcover->hardcoverOption->objectName(), QString("rrHardcoverSync"));
+        QVERIFY(!hardcover->hardcoverOption->isChecked());
+        QCOMPARE(hardcover->hardcoverOption->text(), strings::get("settings.hardcover_sync"));
+        QCOMPARE(hardcover->findChildren<ui::DescribedOption *>().size(), 11);
     }
     void settingsContentMeasurement() {
         QWidget owner;
