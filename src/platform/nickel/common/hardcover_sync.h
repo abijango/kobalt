@@ -5,6 +5,7 @@
 #include <QStringList>
 #include <QVector>
 #include <functional>
+class QTimer;
 
 namespace kobalt {
 inline constexpr int hardcoverMinimumPercent = 2;
@@ -21,12 +22,26 @@ public:
         QString pendingPath;
         QString preferencesPath;
     };
+    // Flags the installed command accepts. NickelHardcover 0.5 uses --linked-id.
+    // 0.4.2 uses --book-id and --after. Passing an unknown flag exits 1.
+    struct CliFlags {
+        QString linkedFlag;
+        bool after = false;
+    };
+    struct CommandResult {
+        int exitCode = -1;
+        QString reason;
+        QString output;
+        QString errorOutput;
+    };
     // 1 when the network can reach Hardcover, 0 when it cannot, -1 when that
-    // is not known. The runner owns the process and reports its exit code.
+    // is not known. The runner owns the process and reports how it finished.
     using Runner = std::function<void(QObject *parent, const QString &program, const QStringList &arguments,
-                                      std::function<void(int)> finished)>;
+                                      std::function<void(const CommandResult &)> finished)>;
+    using Probe = std::function<CliFlags(const QString &program)>;
 
-    HardcoverSync(Paths paths, std::function<int()> network, Runner runner, QObject *parent = nullptr);
+    HardcoverSync(Paths paths, std::function<int()> network, Runner runner, Probe probe = {},
+                  QObject *parent = nullptr);
     void note(const QString &contentId, int percent);
     int pendingCount() const {
         return pending.size();
@@ -40,6 +55,7 @@ public:
 
 public slots:
     void flush();
+    void networkConnected();
 
 private:
     struct Update {
@@ -49,6 +65,11 @@ private:
     Paths paths;
     std::function<int()> network;
     Runner runner;
+    Probe probe;
+    QString probedProgram;
+    CliFlags probedFlags;
+    int lastLink = -2;
+    QTimer *retryTimer = nullptr;
     QVector<Update> pending;
     QHash<QString, int> sent;
     QString inflightId;
@@ -70,7 +91,12 @@ private:
     QString settingsPath() const;
     bool removePending(const QString &contentId);
     void remember(const QString &contentId, int percent);
-    void complete(int code);
+    void complete(const CommandResult &result);
     void watchNetwork();
+    void noteNetwork(int link, const char *source);
+    void armNetworkRetry();
+    CliFlags flagsFor(const QString &program);
+    QString libraryPath() const;
+    QString readBookValue(const QString &contentId, const char *field) const;
 };
 }

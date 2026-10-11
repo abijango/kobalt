@@ -12,6 +12,12 @@
 using namespace kobalt;
 namespace {
 const auto book = QStringLiteral("file:///mnt/onboard/books/Katabasis-R. F. Kuang.epub");
+HardcoverSync::CommandResult result(int code) {
+    HardcoverSync::CommandResult value;
+    value.exitCode = code;
+    value.reason = QStringLiteral("exited");
+    return value;
+}
 QString nickelKey(QString contentId, const char *field) {
     contentId.replace(QLatin1Char('/'), QLatin1Char('-'));
     contentId.replace(QLatin1Char('\\'), QLatin1Char('-'));
@@ -23,7 +29,7 @@ struct Harness {
     bool finishNow = false;
     int finishCode = 0;
     QVector<QStringList> attempts;
-    QVector<std::function<void(int)>> waiting;
+    QVector<std::function<void(const HardcoverSync::CommandResult &)>> waiting;
     std::unique_ptr<HardcoverSync> sync;
     QString preferences;
     QString pending;
@@ -41,10 +47,11 @@ struct Harness {
             [this] {
                 return link;
             },
-            [this](QObject *, const QString &, const QStringList &arguments, std::function<void(int)> finished) {
+            [this](QObject *, const QString &, const QStringList &arguments,
+                   std::function<void(const HardcoverSync::CommandResult &)> finished) {
                 attempts.append(arguments);
                 if (finishNow)
-                    finished(finishCode);
+                    finished(result(finishCode));
                 else
                     waiting.append(std::move(finished));
             });
@@ -52,7 +59,7 @@ struct Harness {
     void finish(int code) {
         require(!waiting.isEmpty(), "No Hardcover command is waiting");
         auto done = waiting.takeFirst();
-        done(code);
+        done(result(code));
     }
     void enable() {
         require(storage::writeJson(preferences, qt::object({{"hardcover_progress_sync", true}})),
@@ -98,7 +105,7 @@ int main(int argc, char **argv) {
         harness.link = 1;
         harness.sync->flush();
         const auto failed = harness.take();
-        require(failed == QStringList({"update", "--content-id", book, "--value", "40"}),
+        require(failed == QStringList({"update", "--value", "40", "--content-id", book}),
                 "Hardcover command arguments changed");
         require(harness.sync->busy(), "Command returned before it finished");
         harness.finish(101);
@@ -112,8 +119,10 @@ int main(int argc, char **argv) {
         QSettings settings(harness.tool + "/settings.ini", QSettings::IniFormat);
         require(settings.value(nickelKey(book, "progress")).toInt() == 40,
                 "Successful command did not record progress");
-        require(!settings.value(nickelKey(book, "lastSynced")).toString().isEmpty(),
-                "Successful command omitted lastSynced");
+        require(settings.value(nickelKey(book, "lastSynced")).toString().isEmpty(),
+                "Successful command wrote lastSynced");
+        require(!harness.attempts.last().contains(QStringLiteral("--after")),
+                "A later update passed --after to a command that does not accept it");
         const int sent = harness.attempts.size();
         harness.sync->note(book, 40);
         require(harness.attempts.size() == sent && harness.sync->pendingCount() == 0,
@@ -141,9 +150,10 @@ int main(int argc, char **argv) {
         require(harness.attempts.isEmpty(), "NickelHardcover's stored percent was sent again");
         harness.sync->note(book, 22);
         const auto args = harness.take();
-        require(args.contains("--book-id") && args.contains("4242") && args.contains("--after") &&
-                    args.contains("2026-05-01T00:00:00Z") && args.contains("22"),
-                "Linked book id or last sync time was omitted");
+        require(args.contains(QStringLiteral("--linked-id")) && args.contains(QStringLiteral("4242")) &&
+                    !args.contains(QStringLiteral("--after")) && !args.contains(QStringLiteral("--book-id")) &&
+                    args.contains(QStringLiteral("22")),
+                "Linked id was omitted or an unsupported flag was added");
     }
     {
         Harness harness;
@@ -183,10 +193,11 @@ int main(int argc, char **argv) {
                 "Cannot enable stored Hardcover sync");
         int link = 0;
         QVector<QStringList> attempts;
-        auto runner = [&](QObject *, const QString &, const QStringList &arguments, std::function<void(int)> finished) {
+        auto runner = [&](QObject *, const QString &, const QStringList &arguments,
+                          std::function<void(const HardcoverSync::CommandResult &)> finished) {
             attempts.append(arguments);
             if (link == 1)
-                finished(0);
+                finished(result(0));
         };
         {
             HardcoverSync sync(

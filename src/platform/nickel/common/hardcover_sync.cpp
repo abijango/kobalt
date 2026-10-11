@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QProcess>
 #include <QSettings>
+#include <QTimer>
 
 #include <memory>
 
@@ -26,30 +27,54 @@ QString redactedOutput(const QByteArray &bytes) {
         return QStringLiteral("redacted");
     return output;
 }
+void finishCommand(QProcess *process, const std::shared_ptr<bool> &completed, const QString &reason, int code,
+                   const std::function<void(const HardcoverSync::CommandResult &)> &finished) {
+    if (*completed)
+        return;
+    *completed = true;
+    HardcoverSync::CommandResult result;
+    result.exitCode = code;
+    result.reason = reason;
+    result.output = redactedOutput(process->readAllStandardOutput());
+    result.errorOutput = redactedOutput(process->readAllStandardError());
+    if (result.errorOutput.isEmpty() && reason != QStringLiteral("exited"))
+        result.errorOutput = redactedOutput(process->errorString().toUtf8());
+    process->deleteLater();
+    finished(result);
+}
 void runDeviceCommand(QObject *parent, const QString &program, const QStringList &arguments,
-                      std::function<void(int)> finished) {
+                      std::function<void(const HardcoverSync::CommandResult &)> finished) {
     auto *process = new QProcess(parent);
+    process->setWorkingDirectory(QFileInfo(program).absolutePath());
     auto completed = std::make_shared<bool>(false);
-    auto finish = [process, finished, completed](int code) {
-        if (*completed)
-            return;
-        *completed = true;
-        const auto output = redactedOutput(process->readAllStandardOutput());
-        if (!output.isEmpty())
-            diagnostic("hardcover-output", {{"text", output}}, false);
-        process->deleteLater();
-        finished(code);
-    };
     QObject::connect(process, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), process,
-                     [finish](int code, QProcess::ExitStatus status) {
-                         finish(status == QProcess::NormalExit ? code : -1);
+                     [process, finished, completed](int code, QProcess::ExitStatus status) {
+                         finishCommand(process, completed,
+                                       status == QProcess::NormalExit ? QStringLiteral("exited")
+                                                                      : QStringLiteral("crashed"),
+                                       status == QProcess::NormalExit ? code : -1, finished);
                      });
     process->start(program, arguments);
-    // start() reports failure on the next turn when the command cannot be launched.
-    qt::later(0, process, [process, finish] {
-        if (process->state() == QProcess::NotRunning)
-            finish(process->error() == QProcess::UnknownError ? process->exitCode() : -1);
+    // Only a launch failure is visible on the next turn. A fast exit is reported
+    // by finished(), after stdout and stderr have been collected.
+    qt::later(0, process, [process, finished, completed] {
+        if (process->state() == QProcess::NotRunning && process->error() == QProcess::FailedToStart)
+            finishCommand(process, completed, QStringLiteral("failed-to-start"), -1, finished);
     });
+}
+HardcoverSync::CliFlags probeCli(const QString &program) {
+    HardcoverSync::CliFlags flags;
+    flags.linkedFlag = QStringLiteral("--linked-id");
+    QProcess process;
+    process.setWorkingDirectory(QFileInfo(program).absolutePath());
+    process.start(program, {QStringLiteral("update"), QStringLiteral("--help")});
+    if (!process.waitForFinished(2000))
+        return flags;
+    const auto help = QString::fromUtf8(process.readAllStandardOutput() + '\n' + process.readAllStandardError());
+    if (help.contains(QStringLiteral("--book-id")) && !help.contains(QStringLiteral("--linked-id")))
+        flags.linkedFlag = QStringLiteral("--book-id");
+    flags.after = help.contains(QStringLiteral("--after"));
+    return flags;
 }
 int deviceNetwork() {
     using Manager = QObject *(*)();
@@ -67,8 +92,9 @@ int deviceNetwork() {
 }
 HardcoverSync *deviceInstance = nullptr;
 }
-HardcoverSync::HardcoverSync(Paths paths, std::function<int()> network, Runner runner, QObject *parent)
-    : QObject(parent), paths(std::move(paths)), network(std::move(network)), runner(std::move(runner)) {
+HardcoverSync::HardcoverSync(Paths paths, std::function<int()> network, Runner runner, Probe probe, QObject *parent)
+    : QObject(parent), paths(std::move(paths)), network(std::move(network)), runner(std::move(runner)),
+      probe(probe ? std::move(probe) : Probe(probeCli)) {
     load();
     watchNetwork();
     flush();
@@ -80,21 +106,30 @@ void HardcoverSync::install(const QString &preferencesPath) {
     paths.toolDirectory = QStringLiteral("/mnt/onboard/.adds/NickelHardcover");
     paths.preferencesPath = preferencesPath;
     paths.pendingPath = QFileInfo(preferencesPath).dir().filePath(QStringLiteral("hardcover-pending.json"));
-    deviceInstance = new HardcoverSync(std::move(paths), deviceNetwork, runDeviceCommand, qApp);
+    deviceInstance = new HardcoverSync(std::move(paths), deviceNetwork, runDeviceCommand, probeCli, qApp);
 }
 HardcoverSync *HardcoverSync::installed() {
     return deviceInstance;
 }
 void HardcoverSync::note(const QString &contentId, int percent) {
-    if (!featureEnabled())
+    if (!featureEnabled()) {
+        diagnostic("hardcover-skipped", {{"reason", "disabled"}, {"percent", percent}}, false);
         return;
+    }
     // An empty id or a negative percent only retries updates already queued.
     if (contentId.isEmpty() || percent < 0) {
         flush();
         return;
     }
-    if (percent < hardcoverMinimumPercent || percent > 100 || !bookAllowed(contentId) ||
-        recordedPercent(contentId) == percent) {
+    const char *skip = nullptr;
+    if (percent < hardcoverMinimumPercent || percent > 100)
+        skip = "below-minimum";
+    else if (!bookAllowed(contentId))
+        skip = "book-disabled";
+    else if (recordedPercent(contentId) == percent)
+        skip = "unchanged";
+    if (skip) {
+        diagnostic("hardcover-skipped", {{"reason", skip}, {"percent", percent}}, false);
         if (removePending(contentId))
             persist();
         flush();
@@ -130,8 +165,11 @@ void HardcoverSync::flush() {
         return;
     }
     const int link = network ? network() : -1;
-    if (link == 0)
+    noteNetwork(link, "flush");
+    if (link == 0) {
+        armNetworkRetry();
         return;
+    }
     const int queued = pending.size();
     while (!pending.isEmpty() && (!bookAllowed(pending.first().contentId) ||
                                   recordedPercent(pending.first().contentId) == pending.first().percent))
@@ -141,20 +179,27 @@ void HardcoverSync::flush() {
     if (pending.isEmpty())
         return;
     const auto item = pending.first();
+    const auto flags = flagsFor(cli);
     running = true;
     inflightId = item.contentId;
     inflightPercent = item.percent;
-    QStringList arguments{QStringLiteral("update"), QStringLiteral("--content-id"), item.contentId,
-                          QStringLiteral("--value"), QString::number(item.percent)};
+    QStringList arguments{QStringLiteral("update"), QStringLiteral("--value"), QString::number(item.percent),
+                          QStringLiteral("--content-id"), item.contentId};
     const auto bookId = linkedBook(item.contentId);
-    if (!bookId.isEmpty())
-        arguments << QStringLiteral("--book-id") << bookId;
+    if (!bookId.isEmpty() && !flags.linkedFlag.isEmpty())
+        arguments << flags.linkedFlag << bookId;
     const auto after = lastSynced(item.contentId);
-    if (!after.isEmpty())
+    if (flags.after && !after.isEmpty())
         arguments << QStringLiteral("--after") << after;
-    diagnostic("hardcover-start", {{"percent", item.percent}}, false);
-    runner(this, cli, arguments, [this](int code) {
-        complete(code);
+    diagnostic("hardcover-start",
+               {{"percent", item.percent},
+                {"linked", !bookId.isEmpty() && !flags.linkedFlag.isEmpty()},
+                {"after", flags.after && !after.isEmpty()}},
+               false);
+    if (retryTimer)
+        retryTimer->stop();
+    runner(this, cli, arguments, [this](const CommandResult &result) {
+        complete(result);
     });
 }
 void HardcoverSync::load() {
@@ -194,30 +239,31 @@ QString HardcoverSync::bookKey(QString contentId, const char *field) const {
     return contentId + QLatin1Char('/') + QLatin1String(field);
 }
 bool HardcoverSync::bookAllowed(const QString &contentId) const {
-    if (!QFile::exists(settingsPath()))
+    const auto value = readBookValue(contentId, "enabled");
+    if (value.isEmpty() && !QFile::exists(libraryPath()) && !QFile::exists(settingsPath()))
         return true;
-    QSettings settings(settingsPath(), QSettings::IniFormat);
-    const auto key = bookKey(contentId, "enabled");
-    if (!settings.contains(key))
+    if (value.isNull())
         return true;
-    return settings.value(key).toBool();
+    for (const auto &path : {libraryPath(), settingsPath()}) {
+        if (!QFile::exists(path))
+            continue;
+        QSettings settings(path, QSettings::IniFormat);
+        const auto key = bookKey(contentId, "enabled");
+        if (settings.contains(key))
+            return settings.value(key).toBool();
+    }
+    return true;
 }
 int HardcoverSync::recordedPercent(const QString &contentId) const {
     if (sent.contains(contentId))
         return sent.value(contentId);
-    if (!QFile::exists(settingsPath()))
-        return -1;
-    QSettings settings(settingsPath(), QSettings::IniFormat);
-    const auto key = bookKey(contentId, "progress");
-    if (!settings.contains(key))
-        return -1;
-    return settings.value(key).toInt();
+    const auto value = readBookValue(contentId, "progress");
+    bool ok = false;
+    const int percent = value.toInt(&ok);
+    return ok ? percent : -1;
 }
 QString HardcoverSync::linkedBook(const QString &contentId) const {
-    if (!QFile::exists(settingsPath()))
-        return {};
-    QSettings settings(settingsPath(), QSettings::IniFormat);
-    return settings.value(bookKey(contentId, "linkedbook")).toString();
+    return readBookValue(contentId, "linkedbook");
 }
 QString HardcoverSync::lastSynced(const QString &contentId) const {
     if (!QFile::exists(settingsPath()))
@@ -244,18 +290,25 @@ void HardcoverSync::remember(const QString &contentId, int percent) {
     sent.insert(contentId, percent);
     if (!QFileInfo(paths.toolDirectory).isDir())
         return;
-    QSettings settings(settingsPath(), QSettings::IniFormat);
+    // Record the percent for NickelHardcover's own debounce. Do not write
+    // lastSynced: 0.5.3 rejects the --after flag that value used to add.
+    const auto path = QFile::exists(libraryPath()) ? libraryPath() : settingsPath();
+    QSettings settings(path, QSettings::IniFormat);
     settings.setValue(bookKey(contentId, "progress"), percent);
-    settings.setValue(bookKey(contentId, "lastSynced"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     settings.sync();
 }
-void HardcoverSync::complete(int code) {
+void HardcoverSync::complete(const CommandResult &result) {
     const auto id = inflightId;
     const int percent = inflightPercent;
+    const int code = result.exitCode;
     running = false;
     inflightId.clear();
     inflightPercent = -1;
-    diagnostic("hardcover-result", {{"percent", percent}, {"exit", code}});
+    diagnostic("hardcover-result", {{"percent", percent},
+                                    {"exit", code},
+                                    {"reason", result.reason},
+                                    {"stdout", result.output},
+                                    {"stderr", result.errorOutput}});
     if (code == 0) {
         remember(id, percent);
         for (int index = 0; index < pending.size(); ++index) {
@@ -269,8 +322,63 @@ void HardcoverSync::complete(int code) {
         return;
     }
     persist();
+    armNetworkRetry();
     if (!pending.isEmpty() && (pending.first().contentId != id || pending.first().percent != percent))
         flush();
+}
+QString HardcoverSync::libraryPath() const {
+    return paths.toolDirectory + QStringLiteral("/library.ini");
+}
+QString HardcoverSync::readBookValue(const QString &contentId, const char *field) const {
+    for (const auto &path : {libraryPath(), settingsPath()}) {
+        if (!QFile::exists(path))
+            continue;
+        QSettings settings(path, QSettings::IniFormat);
+        const auto key = bookKey(contentId, field);
+        if (settings.contains(key))
+            return settings.value(key).toString();
+    }
+    return {};
+}
+HardcoverSync::CliFlags HardcoverSync::flagsFor(const QString &program) {
+    if (probedProgram == program)
+        return probedFlags;
+    probedProgram = program;
+    probedFlags = probe ? probe(program) : probeCli(program);
+    diagnostic("hardcover-cli", {{"linked", probedFlags.linkedFlag}, {"after", probedFlags.after}}, false);
+    return probedFlags;
+}
+void HardcoverSync::noteNetwork(int link, const char *source) {
+    if (link == lastLink && QString::fromLatin1(source) != QStringLiteral("networkConnected"))
+        return;
+    lastLink = link;
+    diagnostic("hardcover-network",
+               {{"state", link == 1   ? "up"
+                          : link == 0 ? "down"
+                                      : "unknown"},
+                {"source", source}},
+               false);
+}
+void HardcoverSync::armNetworkRetry() {
+    if (pending.isEmpty() || running) {
+        if (retryTimer)
+            retryTimer->stop();
+        return;
+    }
+    if (!retryTimer) {
+        retryTimer = new QTimer(this);
+        retryTimer->setInterval(5000);
+        connect(retryTimer, &QTimer::timeout, this, [this] {
+            const int link = network ? network() : -1;
+            if (link == lastLink)
+                return;
+            noteNetwork(link, "poll");
+            if (link != 0)
+                flush();
+        });
+    }
+    if (!retryTimer->isActive())
+        retryTimer->start();
 }
 void HardcoverSync::watchNetwork() {
     if (watchingNetwork || networkWatchTried)
@@ -278,11 +386,19 @@ void HardcoverSync::watchNetwork() {
     using Manager = QObject *(*)();
     const auto manager = reinterpret_cast<Manager>(dlsym(RTLD_DEFAULT, "_ZN15WirelessManager14sharedInstanceEv"));
     auto *instance = manager ? manager() : nullptr;
+    if (!manager) {
+        diagnostic("hardcover-network-watch", {{"connected", false}, {"reason", "symbol-missing"}});
+        networkWatchTried = true;
+        return;
+    }
     if (!instance)
         return;
     networkWatchTried = true;
-    watchingNetwork = bool(connect(instance, SIGNAL(networkConnected()), this, SLOT(flush())));
-    if (!watchingNetwork)
-        diagnostic("hardcover-network-watch-failed");
+    watchingNetwork = bool(connect(instance, SIGNAL(networkConnected()), this, SLOT(networkConnected())));
+    diagnostic("hardcover-network-watch", {{"connected", watchingNetwork}});
+}
+void HardcoverSync::networkConnected() {
+    noteNetwork(1, "networkConnected");
+    flush();
 }
 }
