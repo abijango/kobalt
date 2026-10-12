@@ -3355,6 +3355,28 @@ private slots:
             QTRY_VERIFY((dialog = host.window()->findChild<QWidget *>("rrFinishBook")) && dialog->isVisible());
         }
     }
+    void sleepWritesNativeProgressBeforeReturning() {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        auto paths = testPaths();
+        paths.directory = root.path();
+        test::ReaderHost host(paths, testFonts, testPlaceholder);
+        CloseHost cleanup{host};
+        const auto identity = QUrl::fromLocalFile(QFileInfo(fixture()).absoluteFilePath()).toString();
+        host.progress = std::make_shared<test::HostProgress>();
+        host.progress->current = {identity, "OEBPS/c1.xhtml", 100, 1, true};
+        host.positions = nickel::positionCodec();
+        host.configureServices = [](ReaderHostServices &services) {
+            services.finishSleepExport = [] {};
+        };
+        QSignalSpy opened(&host, &test::ReaderHost::opened);
+        host.open(fixture(), nativeSize);
+        QTRY_COMPARE_WITH_TIMEOUT(opened.count(), 1, 30000);
+        QTRY_VERIFY(!host.session()->busy());
+        const int before = host.progress->writes;
+        host.window()->sleepReader();
+        QVERIFY(host.progress->writes > before);
+    }
     void bookmarkRemovalRequiresConfirmation_data() {
         QTest::addColumn<bool>("confirm");
         QTest::newRow("cancel") << false;

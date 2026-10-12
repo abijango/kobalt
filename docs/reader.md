@@ -237,7 +237,7 @@ Ordinary page turns reuse chapter pages and the available font list in memory. C
 
 ## Sleep, USB and power
 
-Before sleep, Kobalt saves its position, writes that position to Nickel, and pauses its work. The native write finishes before the device suspends. The page stays on screen until Nickel's sleep screen is ready. Kobalt then shows the sleep screen with one full refresh, which also clears the page, so the screen flashes once, as in Nickel's own reader. After wake, Kobalt checks authorization before it shows the book again. If wake or USB cancellation arrives while the previous operation is still releasing resources, Kobalt completes that release before checking authorization again. A queued Hardcover update does not hold suspend.
+Before sleep, Kobalt saves its position, writes that position to Nickel, and pauses its work. Nickel tells Kobalt it is about to sleep on the interface thread and does not return to the event loop, so Kobalt waits there until the database write finishes. Nickel then builds the sleep screen from the updated percent. The wait is at most two seconds. A queued Hardcover update does not hold suspend. The page stays on screen until Nickel's sleep screen is ready. Kobalt then shows the sleep screen with one full refresh, which also clears the page, so the screen flashes once, as in Nickel's own reader. After wake, Kobalt checks authorization before it shows the book again. If wake or USB cancellation arrives while the previous operation is still releasing resources, Kobalt completes that release before checking authorization again.
 
 A confirmed USB connection closes the book, saves the local position and releases every file on user storage before Nickel exports the storage. Reopen the book from the library afterwards.
 

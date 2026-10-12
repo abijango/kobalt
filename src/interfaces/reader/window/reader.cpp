@@ -16,6 +16,8 @@
 #include "interfaces/reader/ui/style/metrics.h"
 #include "storage/reader_storage.h"
 #include <QApplication>
+#include <QEventLoop>
+#include <QTimer>
 #include <QJsonArray>
 #include <QFontInfo>
 #include <QFontMetrics>
@@ -29,6 +31,7 @@
 #include <QShowEvent>
 #include <QTime>
 #include <QTouchEvent>
+#include <memory>
 #include <utility>
 
 namespace kobalt::reader {
@@ -1265,15 +1268,56 @@ void Reader::reportNativeProgress(const char *reason) {
 
 void Reader::exportSleepProgress() {
     sleepExportPending = true;
-    model->nativePosition([this](const QString &location, const QString &error) {
+    // aboutToSleep runs on the GUI thread and does not return to the event
+    // loop. The position export posts its result back here, so without
+    // waiting Nickel shows the sleep view and suspends while Kobo's database
+    // still has the old percent.
+    if (!services.finishSleepExport) {
+        model->nativePosition([this](const QString &location, const QString &error) {
+            finishSleepProgress(location, error);
+        });
+        return;
+    }
+    struct Wait {
+        QEventLoop loop;
+        bool settled = false;
+    };
+    auto wait = std::make_shared<Wait>();
+    model->nativePosition([this, wait](const QString &location, const QString &error) {
+        // A timeout already let sleep continue. Keep the late position anyway.
+        if (wait->settled) {
+            if (model->pages() > 0)
+                book->writeNative(location, error, ReadingBook::NativeWrite::Sleep);
+            return;
+        }
+        wait->settled = true;
+        finishSleepProgress(location, error);
+        wait->loop.quit();
+    });
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &wait->loop, [this, wait] {
+        if (wait->settled)
+            return;
+        wait->settled = true;
         sleepExportPending = false;
-        // An unfinished layout has no page count yet. Leave Nickel's percent.
-        if (model->pages() > 0 && book->writeNative(location, error, ReadingBook::NativeWrite::Sleep))
-            save(true);
-        reportNativeProgress("sleep");
+        diagnostic("native-save", {{"result", "sleep-timeout"}, {"failed", true}});
         if (services.finishSleepExport)
             services.finishSleepExport();
+        wait->loop.quit();
     });
+    timeout.start(2000);
+    wait->loop.exec(QEventLoop::ExcludeUserInputEvents);
+}
+
+void Reader::finishSleepProgress(const QString &location, const QString &error) {
+    sleepExportPending = false;
+    // An unfinished layout has no page count yet. Leave Nickel's percent.
+    if (model->pages() > 0 && book->writeNative(location, error, ReadingBook::NativeWrite::Sleep))
+        save(true);
+    reportNativeProgress("sleep");
+    if (services.finishSleepExport)
+        services.finishSleepExport();
 }
 
 // A page turn does not have to reach storage before the next one. Write
