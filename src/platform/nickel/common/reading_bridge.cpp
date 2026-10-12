@@ -16,6 +16,9 @@ public:
     bool writable() const override {
         return !NativeLifecycle::suspended() && !progress_->deviceTransition();
     }
+    bool allowsSleepSnapshot() const override {
+        return !progress_->deviceTransition();
+    }
     ReadingProgress read(QString *error) const override {
         return progress_->read(error);
     }

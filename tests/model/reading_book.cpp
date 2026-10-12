@@ -44,7 +44,7 @@ void tick() {
 }
 struct Calls {
     int reads = 0, writes = 0, observed = 0, stopped = 0, destroyed = 0;
-    bool writable = true, transition = false, changed = true, failWrite = false;
+    bool writable = true, transition = false, changed = true, failWrite = false, sleepSnapshot = false;
     bool finished = false;
     QString location;
     ReadingProgress current{"store-id", "chapter.xhtml#one", 1, 1, true};
@@ -60,6 +60,9 @@ public:
     }
     bool writable() const override {
         return calls.writable && !calls.transition;
+    }
+    bool allowsSleepSnapshot() const override {
+        return calls.sleepSnapshot && !calls.transition;
     }
     ReadingProgress read(QString *) const override {
         ++calls.reads;
@@ -312,6 +315,23 @@ int main(int argc, char **argv) {
         book.observeProgress();
         book.observeReading();
         require(calls.destroyed == 1 && !book.offerFinish(), "Released book accessed its bridge again");
+    }
+    {
+        Calls calls;
+        calls.writable = false;
+        calls.sleepSnapshot = true;
+        auto session = open();
+        const auto hash = session->sourceHash();
+        ReadingBook book(std::move(session), paths.bookState("sleep-id"), paths, "sleep-id", hash,
+                         std::make_unique<Bridge>(calls), calls.current, calls.current);
+        require(!book.canWriteNative(), "A sleep snapshot enabled ordinary native writes");
+        require(book.writeNative("sleep-position", {}, ReadingBook::NativeWrite::Sleep) && calls.writes == 1 &&
+                    calls.location == QStringLiteral("sleep-position") && book.wroteNativeProgress() &&
+                    book.nativePercent() >= 0,
+                "Sleep did not persist native progress");
+        calls.transition = true;
+        require(book.writeNative("sleep-position", {}, ReadingBook::NativeWrite::Sleep) && calls.writes == 1,
+                "Sleep persisted native progress during a device transition");
     }
     bool drained = false;
     ReaderSession::drain([&] {

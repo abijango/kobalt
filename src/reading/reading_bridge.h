@@ -29,6 +29,11 @@ public:
     virtual ~ReadingBridge() = default;
     virtual bool deviceTransition() const = 0;
     virtual bool writable() const = 0;
+    // Sleep may still update the saved position. USB and other device
+    // transitions stay blocked. Ordinary reading activity uses writable().
+    virtual bool allowsSleepSnapshot() const {
+        return false;
+    }
     virtual ReadingProgress read(QString *error = nullptr) const = 0;
     virtual bool takeChange() = 0;
     virtual bool write(const ReadingProgress &expected, const QString &location, double percent, bool finished,

@@ -54,6 +54,10 @@ struct ReaderHostServices {
     std::function<QJsonObject(const QJsonObject &)> debugProgressAction;
     std::function<bool()> browserAvailable;
     std::function<bool(const QUrl &, QWidget *)> openBrowser;
+    // Optional. Empty when the host has no external reading-progress sync.
+    std::function<void(const QString &contentId, int percent)> reportReadingProgress;
+    // Optional. Releases a suspend hold after a sleep-time native save.
+    std::function<void()> finishSleepExport;
     bool complete() const {
         return clock && battery && pageButtons && reverseLandscapeButtons && pageButtonDirection && fontFamilies &&
                uiFont && suspended && lightAvailable && animationsAvailable && cancelAnimation && light && dictionary &&

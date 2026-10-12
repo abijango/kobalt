@@ -76,6 +76,7 @@ private:
     void updateOpening(kobalt::OpeningStage stage, int percent);
     unsigned generation = 0;
     bool busy = false;
+    bool sleepExportArmed = false;
 
     void status(const QString &value, const QString &reason = {});
     void hideLoading();
@@ -91,6 +92,8 @@ private:
     void load();
 
     void showReader();
+    void armSleepExport();
+    void completeSleepExport();
 };
 
 }

@@ -249,6 +249,10 @@ private slots:
         lifecycle.draining = true;
         QVERIFY(!kobalt_can_suspend(nullptr));
         lifecycle.draining = false;
+        kobalt::NativeLifecycle::deferSuspend(true);
+        QVERIFY(!kobalt_can_suspend(nullptr));
+        kobalt::NativeLifecycle::deferSuspend(false);
+        QVERIFY(kobalt_can_suspend(nullptr));
         nativeSuspendAllowed = false;
         QVERIFY(!kobalt_can_suspend(nullptr));
     }

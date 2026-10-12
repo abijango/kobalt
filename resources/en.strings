@@ -519,6 +519,8 @@
 "settings.pin_stats_description" = "Stats stays open above the bottom bar whenever the reading controls are open.";
 "reader.heavier_interface_text" = "More readable interface text";
 "settings.heavier_interface_text_description" = "Draws the text of menus and panels slightly heavier. The book keeps its own weight setting.";
+"settings.hardcover_sync" = "Sync reading progress to Hardcover";
+"settings.hardcover_sync_description" = "Sends progress through NickelHardcover when a book closes or the device sleeps. Nothing is sent when it is not installed.";
 /* Arguments: %1 */
 "stats.time_left" = "≈ %1 left";
 /* Arguments: %1 */

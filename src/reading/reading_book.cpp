@@ -32,6 +32,9 @@ bool ReadingBook::deviceTransition() const {
 bool ReadingBook::canWriteNative() const {
     return bridge && bridge->writable();
 }
+bool ReadingBook::wroteNativeProgress() const {
+    return nativeWriteback == QLatin1String("verified") || nativeWriteback == QLatin1String("time-only");
+}
 void ReadingBook::releaseNative() {
     stopReading();
     bridge.reset();
@@ -105,7 +108,7 @@ void ReadingBook::acknowledge(const ReadingProgress &shown, bool moved) {
     baseline = reconciliation.baseline();
     acceptedFinishedAnchor = moved && shown.status == 2 ? model->state().value("position").toString() : QString();
 }
-bool ReadingBook::writeNative(const QString &location, const QString &mappingError) {
+bool ReadingBook::writeNative(const QString &location, const QString &mappingError, NativeWrite mode) {
     if (!bridge && !released) {
         nativeWriteback = "local-only";
         nativeWritebackError.clear();
@@ -119,7 +122,9 @@ bool ReadingBook::writeNative(const QString &location, const QString &mappingErr
     const bool timeOnly = !mappingError.isEmpty();
     QString error = timeOnly && !plainEpub() ? mappingError : QString();
     nativeWriteback = "local-only";
-    if (error.isEmpty() && canWriteNative()) {
+    const bool allowed =
+        mode == NativeWrite::Sleep ? bridge && (bridge->writable() || bridge->allowsSleepSnapshot()) : canWriteNative();
+    if (error.isEmpty() && allowed) {
         const auto current = bridge->read(&error);
         reconciliation.observe(current);
         if (reconciliation.pending())
@@ -134,11 +139,12 @@ bool ReadingBook::writeNative(const QString &location, const QString &mappingErr
                 baseline = verified;
                 reconciliation = ProgressReconciler(verified);
                 nativeWriteback = timeOnly ? "time-only" : "verified";
+                lastNativePercent = preserveFinished ? 100 : qBound(0, qRound(percent), 100);
             } else {
                 // A commit can lose a race after the earlier read. Ask about
                 // that update before letting the window finish its exit.
                 observeProgress();
-                if (reconciliation.pending() && canWriteNative())
+                if (reconciliation.pending() && allowed)
                     return false;
             }
         } else if (error.isEmpty())

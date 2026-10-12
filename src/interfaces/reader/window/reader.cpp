@@ -40,6 +40,9 @@ using kobalt::platform::textRefresh;
 using kobalt::Choice;
 
 Reader::~Reader() {
+    if (sleepExportPending && services.finishSleepExport)
+        services.finishSleepExport();
+    sleepExportPending = false;
     model->renderProgressChanged = {};
     renderNoticeTimer.stop();
     model->cancelPendingTurn();
@@ -72,6 +75,7 @@ void Reader::prepareShutdown(std::function<void()> finished) {
         // checkpoint. Shutdown cannot wait for a new confirmation dialog.
         book->writeNative(location, error);
         save(true);
+        reportNativeProgress("shutdown");
         finished();
     });
 }
@@ -97,7 +101,9 @@ void Reader::sleepReader() {
     if (finishDialog)
         finishDialog->hide();
     // Keep the page on screen until Nickel's sleep view replaces it, as in
-    // Nickel's own reader. sleepViewReady() submits that view.
+    // Nickel's own reader. sleepViewReady() submits that view. The native
+    // save finishes before suspend; a Hardcover update stays queued.
+    exportSleepProgress();
 }
 
 void Reader::prepareWake() {
@@ -1203,6 +1209,7 @@ void Reader::recordOpening() {
         // sync dialog asks, and exit saves afterwards.
         book->writeNative(location, mappingError);
         save(true);
+        reportNativeProgress("open");
     });
 }
 
@@ -1238,8 +1245,34 @@ void Reader::finishExit() {
             return;
         }
         save(true);
+        reportNativeProgress("close");
         closing = true;
         close();
+    });
+}
+
+void Reader::reportNativeProgress(const char *reason) {
+    if (!services.reportReadingProgress)
+        return;
+    if (book && book->wroteNativeProgress()) {
+        diagnostic("hardcover-note", {{"reason", reason}, {"percent", book->nativePercent()}}, false);
+        services.reportReadingProgress(book->identity(), book->nativePercent());
+        return;
+    }
+    // Opening, closing or sleeping still retries an update queued earlier.
+    services.reportReadingProgress({}, -1);
+}
+
+void Reader::exportSleepProgress() {
+    sleepExportPending = true;
+    model->nativePosition([this](const QString &location, const QString &error) {
+        sleepExportPending = false;
+        // An unfinished layout has no page count yet. Leave Nickel's percent.
+        if (model->pages() > 0 && book->writeNative(location, error, ReadingBook::NativeWrite::Sleep))
+            save(true);
+        reportNativeProgress("sleep");
+        if (services.finishSleepExport)
+            services.finishSleepExport();
     });
 }
 

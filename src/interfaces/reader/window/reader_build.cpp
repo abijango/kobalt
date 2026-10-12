@@ -760,6 +760,9 @@ void Reader::buildSettings() {
     settingsInputs.animationsSupported = services.animationsAvailable();
     settingsInputs.lightSupported = services.lightAvailable();
     settingsInputs.warmthSupported = warmthSupported;
+#ifdef KOBALT_READER_HARDWARE
+    settingsInputs.hardcoverSync = true;
+#endif
 #ifndef KOBALT_READER_HARDWARE
     settingsInputs.debugProgressAvailable = true;
 #endif
@@ -828,6 +831,7 @@ void Reader::buildSettings() {
     denseGraphOption = settings->denseGraphOption;
     pinStatsOption = settings->pinStatsOption;
     heavierTextOption = settings->heavierTextOption;
+    hardcoverOption = settings->hardcoverOption;
     linkIndicatorOption = settings->linkIndicatorOption;
     bionicOption = settings->bionicOption;
     refreshButton = settings->refreshButton;
@@ -839,6 +843,10 @@ void Reader::buildSettings() {
     connect(heavierTextOption, &QCheckBox::clicked, this, [this](bool enabled) {
         applyHeavierText(enabled);
     });
+    if (hardcoverOption)
+        connect(hardcoverOption, &QCheckBox::clicked, this, [this](bool enabled) {
+            applyHardcoverSync(enabled);
+        });
     connect(refreshButton, &QPushButton::clicked, this, [this] {
         openScreenRefresh();
     });

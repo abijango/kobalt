@@ -26,6 +26,7 @@
 #include "support/diagnostics.h"
 #include "reader_environment.h"
 #include "reader_host_services.h"
+#include "hardcover_sync.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "interfaces/reader_interface.h"
 #include "interfaces/opening_message.h"
@@ -82,8 +83,13 @@ ReaderCoordinator::ReaderCoordinator(ReaderEnvironment &environment, Coordinator
             // hidden. Keep its saved position without creating a sleep cover.
             if (BrowserHandoff::activeFor(run.reader))
                 run.reader->checkpoint();
-            else
+            else {
+                // aboutToSleep paused the engine. Release it until the native
+                // percent is stored, then pause again. Suspend stays blocked
+                // until that write returns; the Hardcover command does not.
+                armSleepExport();
                 run.reader->sleepReader();
+            }
         } else if (busy || run.fallbackAlert)
             disposeForTransition([] {});
     };
@@ -139,6 +145,7 @@ ReaderCoordinator::ReaderCoordinator(ReaderEnvironment &environment, Coordinator
         else
             disposeForTransition([] {});
     };
+    HardcoverSync::install(environment_.paths.preferences());
     if (bindings_.installInput)
         bindings_.installInput(this);
     connect(&timer, &QTimer::timeout, this, [this] {
@@ -578,7 +585,11 @@ void ReaderCoordinator::showReader() {
     auto book = std::make_unique<kobalt::ReadingBook>(
         std::move(run.model), run.statePath, environment_.paths, run.identity, run.expectedHash,
         kobalt::nickel::makeReadingBridge(run.identity, std::move(run.nativeProgress)), run.baseline, run.diskBaseline);
-    run.reader = run.interface->createWindow(std::move(book), run.orientation.get(), readerHostServices());
+    auto services = readerHostServices();
+    services.finishSleepExport = [this] {
+        completeSleepExport();
+    };
+    run.reader = run.interface->createWindow(std::move(book), run.orientation.get(), services);
     run.reader->finished = [this](std::unique_ptr<kobalt::ReaderSession> retained) {
         // closeEvent has accepted this close. Do not let the visibility
         // poll show the reader again before Qt processes deleteLater().
@@ -629,6 +640,21 @@ void ReaderCoordinator::showReader() {
     hideLoading();
     run.openingTimings["total_ms"] = run.openingTimer.elapsed();
     status("reading");
+}
+
+void ReaderCoordinator::armSleepExport() {
+    if (!run.reader || run.reader->property("reader_sleep_clean_pending").toBool())
+        return;
+    sleepExportArmed = true;
+    kobalt::NativeLifecycle::deferSuspend(true);
+    kobalt::engineActivity().pause(false);
+}
+
+void ReaderCoordinator::completeSleepExport() {
+    kobalt::NativeLifecycle::deferSuspend(false);
+    if (sleepExportArmed && !lifecycle->storageBlocked() && kobalt::NativeLifecycle::suspended())
+        kobalt::engineActivity().pause(true);
+    sleepExportArmed = false;
 }
 
 ReaderCoordinator::~ReaderCoordinator() = default;

@@ -1,3 +1,15 @@
+## Unreleased
+
+### What's new
+
+Optional Hardcover.app reading-progress sync on Kobo when NickelHardcover is installed. The switch is in Settings → Advanced and stays off until turned on. Progress is sent when a book closes or the device sleeps, and waits for Wi-Fi without delaying sleep.
+
+### What's changed
+
+Sleep writes the current reading position to Nickel, as closing a book already does.
+
+Hardcover progress sync logs the command's stdout, stderr and exit reason, and only passes flags that the installed NickelHardcover command accepts. Pending updates are retried when Wi-Fi connects.
+
 ## v1.0-beta.2
 
 ### Fixed

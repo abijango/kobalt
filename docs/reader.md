@@ -110,7 +110,7 @@ On Kobo, closing a book also saves its parsed document and its pages in `.adds/k
 
 ## Reading position and progress
 
-Kobalt saves the position in its own per-book file and writes it back to Nickel when the book opens and when it closes. The first opening imports Nickel's saved position. On later openings, a newer Nickel position wins over the local one. Like Nickel's reader, the write at opening marks the book as the one being read, so Home and the sleep screen show it. Sleep saves only the local position. Like Nickel's reader, Kobalt opens every saved position: when the exact place is missing, it opens the start of the chapter, and when the chapter is missing, the start of the book. It shows no message, and logs a `native-position-fallback` event with the chapter file.
+Kobalt saves the position in its own per-book file and writes it back to Nickel when the book opens, when it closes, and when the device sleeps. The first opening imports Nickel's saved position. On later openings, a newer Nickel position wins over the local one. Like Nickel's reader, the write at opening marks the book as the one being read, so Home and the sleep screen show it. Sleep writes Nickel's progress before the device suspends, after saving the local position. Like Nickel's reader, Kobalt opens every saved position: when the exact place is missing, it opens the start of the chapter, and when the chapter is missing, the start of the book. It shows no message, and logs a `native-position-fallback` event with the chapter file.
 
 Kobalt recognizes a changed book by the file size and the ZIP directory, which holds the checksum of every file in the book. When the book changes, for example after an update from the store, Kobalt discards its saved position and typography for that book and imports Nickel's position.
 
@@ -123,6 +123,16 @@ Kobalt writes Nickel's progress under Nickel's own database lock, through Nickel
 While reading, Kobalt checks Nickel's progress after a sync, an account update, USB and wake, and once a minute otherwise. If a different, newer position arrives, it asks "Keep reading here" or "Go to synced position". It never jumps without asking.
 
 At 90% or more on exit, or when you turn past the last page, Kobalt asks whether to mark the book finished. Like Nickel's reader, opening a finished book marks it as reading again.
+
+## Hardcover progress
+
+Settings → Advanced → Sync reading progress to Hardcover is off until you turn it on. It is available on the firmware 4 and firmware 5/6 builds. When it is on, and [NickelHardcover](https://github.com/RedHatter/NickelHardcover)'s command is installed at `/mnt/onboard/.adds/NickelHardcover/cli` (or `CLI`), Kobalt runs that command after a successful native progress save. The command reads its own `config.ini`, including the Hardcover token. Kobalt does not turn Wi-Fi on, and it does nothing when the command is absent.
+
+The update is queued when a book opens, when it closes, when the device sleeps, and when it shuts down. The queued value is the book's ContentID and the percent just written to Nickel. Percents under 2 are not sent. The same percent is not sent twice. An explicit per-book `enabled` value in NickelHardcover's library is honored. A linked Hardcover id is passed with the flag that installed command accepts (`--linked-id` on 0.5, `--book-id` on 0.4.2). Kobalt does not pass flags the command does not advertise.
+
+Wi-Fi is often already going down at sleep. The command is not waited on, so suspend is not held for the network. A failed or postponed update stays in `.adds/kobalt/hardcover-pending.json` and is tried when Nickel reports that the network connected, or the next time a book is opened or closed. Shutdown stores the update and does not wait for Hardcover.
+
+Kobalt's highlights stay in `.adds/kobalt/annotations/` and are not written to Nickel's bookmark table. Journal sync therefore does not include them. NickelHardcover's own menu, ratings and manual linking stay in Nickel's reader.
 
 Kobalt also reports reading sessions and page turns to Nickel, so Nickel's reading time and last-read date update. On firmware 4, Kobalt accepts either the current reading-session functions or the older pair without a reader-state argument. It requires a complete pair with the same calling convention.
 
@@ -185,7 +195,7 @@ The Light tab is shown only when the host can control the frontlight. Android ha
 Settings has the following tabs:
 
 - Display: dark mode, Bionic reading, book progress bar, page animations and how often the screen refreshes. Page animations apply only while reading in Kobalt; a handoff to Nickel uses Nickel's own page turns.
-- Advanced: smooth images, link indicator, edge swipes for the frontlight, More readable interface text and Restore appearance defaults.
+- Advanced: smooth images, link indicator, edge swipes for the frontlight, More readable interface text, Sync reading progress to Hardcover on Kobo, and Restore appearance defaults. The Hardcover switch is off until turned on and is shown on firmware 4 and firmware 5/6.
 - Dictionaries: browse, install and remove downloaded dictionaries. This tab is available on Android and in the desktop app's Fill window mode.
 - Stats: Compact chapter graphs, off by default, and Always show statistics, off by default. With it on, Stats has no tab in the bottom bar. It opens above the tabs whenever the reading controls open. It hides while Settings is open, and while another panel overlaps it, such as Text, Layout, Light or Chapters.
 - About: version and Qt build, such as "Version 1.0-beta.1 (Qt5)", the short commit of the sources, with `*` when they had uncommitted changes, the description "An experimental alternative EPUB reader." and acknowledgments.
@@ -227,7 +237,7 @@ Ordinary page turns reuse chapter pages and the available font list in memory. C
 
 ## Sleep, USB and power
 
-Before sleep, Kobalt saves its position and pauses its work. The page stays on screen until Nickel's sleep screen is ready. Kobalt then shows the sleep screen with one full refresh, which also clears the page, so the screen flashes once, as in Nickel's own reader. After wake, Kobalt checks authorization before it shows the book again. If wake or USB cancellation arrives while the previous operation is still releasing resources, Kobalt completes that release before checking authorization again.
+Before sleep, Kobalt saves its position, writes that position to Nickel, and pauses its work. The native write finishes before the device suspends. The page stays on screen until Nickel's sleep screen is ready. Kobalt then shows the sleep screen with one full refresh, which also clears the page, so the screen flashes once, as in Nickel's own reader. After wake, Kobalt checks authorization before it shows the book again. If wake or USB cancellation arrives while the previous operation is still releasing resources, Kobalt completes that release before checking authorization again. A queued Hardcover update does not hold suspend.
 
 A confirmed USB connection closes the book, saves the local position and releases every file on user storage before Nickel exports the storage. Reopen the book from the library afterwards.
 
