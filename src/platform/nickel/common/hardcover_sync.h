@@ -1,4 +1,5 @@
 #pragma once
+#include "hardcover_progress.h"
 #include <QHash>
 #include <QObject>
 #include <QString>
@@ -70,6 +71,7 @@ private:
     CliFlags probedFlags;
     int lastLink = -2;
     QTimer *retryTimer = nullptr;
+    HardcoverProgress *progressClient = nullptr;
     QVector<Update> pending;
     QHash<QString, int> sent;
     QString inflightId;

@@ -94,7 +94,8 @@ HardcoverSync *deviceInstance = nullptr;
 }
 HardcoverSync::HardcoverSync(Paths paths, std::function<int()> network, Runner runner, Probe probe, QObject *parent)
     : QObject(parent), paths(std::move(paths)), network(std::move(network)), runner(std::move(runner)),
-      probe(probe ? std::move(probe) : Probe(probeCli)) {
+      probe(probe ? std::move(probe) : Probe(probeCli)),
+      progressClient(new HardcoverProgress(paths.toolDirectory + QStringLiteral("/config.ini"), this)) {
     load();
     watchNetwork();
     flush();
@@ -156,8 +157,9 @@ void HardcoverSync::flush() {
     watchNetwork();
     if (running || !featureEnabled() || pending.isEmpty() || !runner)
         return;
-    const auto cli = findCli();
-    if (cli.isEmpty()) {
+    const bool graphql = progressClient && progressClient->configured();
+    const auto cli = graphql ? QString() : findCli();
+    if (!graphql && cli.isEmpty()) {
         if (!reportedMissingCli) {
             reportedMissingCli = true;
             diagnostic("hardcover-cli-missing");
@@ -179,6 +181,23 @@ void HardcoverSync::flush() {
     if (pending.isEmpty())
         return;
     const auto item = pending.first();
+    if (progressClient->configured()) {
+        running = true;
+        inflightId = item.contentId;
+        inflightPercent = item.percent;
+        diagnostic("hardcover-start", {{"percent", item.percent}, {"transport", "graphql"}}, false);
+        if (retryTimer)
+            retryTimer->stop();
+        progressClient->update(item.contentId, linkedBook(item.contentId), item.percent,
+                               [this](bool ok, const QString &detail) {
+                                   CommandResult result;
+                                   result.exitCode = ok ? 0 : 1;
+                                   result.reason = ok ? QStringLiteral("graphql") : QStringLiteral("graphql-failed");
+                                   result.output = detail;
+                                   complete(result);
+                               });
+        return;
+    }
     const auto flags = flagsFor(cli);
     running = true;
     inflightId = item.contentId;

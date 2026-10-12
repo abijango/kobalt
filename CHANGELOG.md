@@ -10,6 +10,8 @@ Sleep writes the current reading position to Nickel, as closing a book already d
 
 Hardcover progress sync logs the command's stdout, stderr and exit reason, and only passes flags that the installed NickelHardcover command accepts. Pending updates are retried when Wi-Fi connects.
 
+When NickelHardcover's config.ini contains a token, reading progress is sent with Hardcover's GraphQL API. The update sets progress_pages on the newest read, using that read's edition, which is the progress the site displays. The command remains the fallback when no token is configured.
+
 Sleep now commits the reading position to Nickel's database before Nickel continues into sleep. Previously the write was left in the event queue, so the sleep screen and library kept the older percent.
 
 ## v1.0-beta.2
