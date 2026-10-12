@@ -18,7 +18,8 @@ set(KOBALT_NICKEL4_ADAPTER_SOURCES
     src/platform/nickel/qt5/native_light.cpp src/platform/nickel/common/native_light.h
     src/platform/nickel/qt5/native_keyboard.cpp src/platform/nickel/common/native_keyboard.h)
 set(KOBALT_INTEGRATION_SOURCES
-    src/platform/nickel/common/book_menu.cpp src/platform/nickel/common/hardcover_sync.cpp
+    src/platform/nickel/common/book_menu.cpp src/platform/nickel/common/hardcover_progress.cpp
+    src/platform/nickel/common/hardcover_progress.h src/platform/nickel/common/hardcover_sync.cpp
     src/platform/nickel/common/hardcover_sync.h src/platform/nickel/common/reading_bridge.cpp
     src/platform/nickel/common/reader_coordinator.cpp
     src/platform/nickel/common/reader_host_services.cpp src/platform/nickel/common/window_presentation.cpp

@@ -310,6 +310,7 @@ private:
     void finishExit();
     void reportNativeProgress(const char *reason);
     void exportSleepProgress();
+    void finishSleepProgress(const QString &location, const QString &error);
     void applyHardcoverSync(bool enabled);
     bool sleepExportPending = false;
     void saveSoon();

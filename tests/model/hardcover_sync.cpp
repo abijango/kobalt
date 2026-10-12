@@ -1,3 +1,4 @@
+#include "platform/nickel/common/hardcover_progress.h"
 #include "platform/nickel/common/hardcover_sync.h"
 #include "storage/reader_storage.h"
 #include "support/qt_compat.h"
@@ -218,6 +219,58 @@ int main(int argc, char **argv) {
             runner);
         require(attempts.size() == 1 && restored.pendingCount() == 0,
                 "A stored update was not sent when the network was up");
+    }
+    require(hardcoverToken(QStringLiteral("authorization=Bearer secret-value\n")) == QStringLiteral("secret-value"),
+            "Bearer prefix stayed on the token");
+    require(hardcoverToken(QStringLiteral("authorization=other\naccess_token=preferred\n")) ==
+                QStringLiteral("preferred"),
+            "access_token was ignored");
+    require(hardcoverToken(QStringLiteral("[General]\n# comment\nauthorization=\"quoted\"\n")) ==
+                QStringLiteral("quoted"),
+            "Quoted authorization was not read");
+    require(hardcoverToken(QStringLiteral("debug=true\n")).isEmpty(), "A config without a token looked configured");
+    {
+        const HardcoverRead older{100, 2661, 400, QStringLiteral("2026-10-12")};
+        const HardcoverRead newer{200, 31889, 432, QStringLiteral("2026-01-01")};
+        const auto update = hardcoverProgressUpdate({older, newer}, 9, 2661, 400, 20);
+        require(!update.insert && update.readId == 200 && update.editionId == 31889 && update.progressPages == 86 &&
+                    update.startedAt == QStringLiteral("2026-01-01"),
+                "Progress update did not use the newest read's edition");
+        const auto inserted = hardcoverProgressUpdate({}, 9, 2661, 432, 20);
+        require(inserted.insert && inserted.valid() && inserted.userBookId == 9 && inserted.progressPages == 86,
+                "A book with no read did not insert at 20 percent");
+        require(!hardcoverProgressUpdate({}, 9, 2661, 0, 20).valid(), "Missing edition pages was treated as valid");
+        const HardcoverRead legend{6610852, 2661, 432, QStringLiteral("2026-10-12")};
+        require(hardcoverProgressUpdate({legend}, 9, 1, 1, 24).progressPages == 104,
+                "24 percent of 432 pages was not 104");
+        require(hardcoverProgressUpdate({legend}, 9, 1, 1, 33).progressPages == 143,
+                "33 percent of 432 pages was not 143");
+    }
+    {
+        const auto reads = qt::array({
+            QJsonValue(qt::object({{"id", 90},
+                                   {"edition_id", 31889},
+                                   {"started_at", "2026-01-01"},
+                                   {"edition", qt::object({{"pages", 432}})}})),
+            QJsonValue(qt::object({{"id", 50},
+                                   {"edition_id", 2661},
+                                   {"started_at", "2026-10-12"},
+                                   {"edition", qt::object({{"pages", 400}})}})),
+        });
+        const auto books = qt::array({
+            QJsonValue(qt::object({{"id", 1}, {"status_id", 1}, {"edition_id", 10}})),
+            QJsonValue(qt::object({{"id", 2},
+                                   {"status_id", 2},
+                                   {"edition_id", 2661},
+                                   {"edition", qt::object({{"pages", 400}})},
+                                   {"user_book_reads", reads}})),
+        });
+        const auto chosen = hardcoverSelectUserBook(books);
+        require(chosen.id == 2 && chosen.editionId == 2661 && chosen.reads.size() == 2 && chosen.reads.last().id == 90,
+                "Currently reading book did not keep the newest read");
+        const auto update = hardcoverProgressUpdate(chosen.reads, chosen.id, chosen.editionId, chosen.pages, 33);
+        require(update.readId == 90 && update.editionId == 31889 && update.progressPages == 143,
+                "The visible read was not the one updated");
     }
     return 0;
 }
