@@ -2,12 +2,15 @@
 #include "interfaces/reader/ui/controls/icons.h"
 #include "interfaces/reader/ui/controls/rows.h"
 #include "interfaces/reader/ui/controls/sliders.h"
+#include "interfaces/reader/ui/style/private_text.h"
 #include "interfaces/reader/ui/style/theme.h"
 #include "appearance_panel.h"
 #include "support/strings.h"
 #include "reading/appearance_settings.h"
 #include "reading/reading_density.h"
 #include "interfaces/reader/ui/style/styles.h"
+
+#include <QEvent>
 
 namespace kobalt::reader {
 namespace m = ui::metrics;
@@ -16,6 +19,40 @@ using ui::readerStyle;
 using ui::buttonIcon;
 using ui::ControlIcon;
 using ui::FontButton;
+namespace {
+class ChoiceLabels : public QObject {
+public:
+    ChoiceLabels(QWidget *frame, const QVector<QPushButton *> &buttons)
+        : QObject(frame), frame(frame), buttons(buttons) {
+        frame->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Resize || event->type() == QEvent::Show) {
+            int required = 0;
+            for (auto *button : buttons) {
+                const auto label = button->property("full_label").isValid() ? button->property("full_label").toString()
+                                                                            : button->accessibleName();
+                const int iconWidth = button->icon().isNull() ? 0 : button->iconSize().width() + ui::px(20);
+                required = qMax(required, ui::interfaceTextWidth(label, button->font()) + iconWidth + ui::px(36));
+            }
+            const bool compact = frame->width() / buttons.size() < required;
+            for (auto *button : buttons) {
+                const auto label = button->property("full_label").isValid() ? button->property("full_label").toString()
+                                                                            : button->accessibleName();
+                button->setText(compact ? button->property("compact_label").toString() : label);
+            }
+        }
+        return false;
+    }
+
+private:
+    QWidget *frame;
+    QVector<QPushButton *> buttons;
+};
+}
+
 AppearancePanel::AppearancePanel(const AppearanceLayout &layout, const AppearancePanelInputs &inputs) {
     auto *typography = layout.typography, *pageLayout = layout.pageLayout;
     auto *typeRows = layout.typeRows, *pageRows = layout.pageRows;
@@ -30,14 +67,17 @@ AppearancePanel::AppearancePanel(const AppearanceLayout &layout, const Appearanc
     // look the same on every screen; the engine gets device pixels.
     sizeSlider =
         kobalt::ui::sliderRow(typography, typeRows, "rrTextSize", "rrTextSizeValue", strings::get("reader.text_size"),
-                              "rrSmaller", "rrLarger", kobalt::minimumHalfPoints, kobalt::maximumHalfPoints, 1, {});
+                              "rrSmaller", "rrLarger", kobalt::minimumHalfPoints, kobalt::maximumHalfPoints, 2, {});
+    sizeSlider->setMarkers({14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48, 56, 64, 80, 96},
+                           ui::SettingSlider::MarkerMode::Stops);
     opticalSizeSlider =
         ui::sliderRow(typography, typeRows, "rrOpticalSize", "rrOpticalSizeValue", strings::get("reader.optical_size"),
                       "rrOpticalSizeLess", "rrOpticalSizeMore", 6, 72, 1, {});
     opticalSizeSlider->parentWidget()->hide();
     weightSlider =
         kobalt::ui::sliderRow(typography, typeRows, "rrFontWeight", "rrFontWeightValue",
-                              strings::get("reader.font_thickness"), "rrLighter", "rrHeavier", 0, 8, 1, {}, "+");
+                              strings::get("reader.font_thickness"), "rrLighter", "rrHeavier", 0, 12, 1, {}, "+");
+    weightSlider->setMarkers({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, ui::SettingSlider::MarkerMode::Stops);
     variableWeightSlider =
         ui::sliderRow(typography, typeRows, "rrVariableFontWeight", "rrVariableFontWeightValue",
                       strings::get("reader.font_weight"), "rrVariableLighter", "rrVariableHeavier", 300, 650, 10, {});
@@ -51,6 +91,12 @@ AppearancePanel::AppearancePanel(const AppearanceLayout &layout, const Appearanc
     verticalMarginSlider = kobalt::ui::sliderRow(pageLayout, pageRows, "rrVerticalMargins", "rrVerticalMarginsValue",
                                                  strings::get("reader.vertical_margins"), "rrVerticalMarginsLess",
                                                  "rrVerticalMarginsMore", 0, 120, 3, {});
+    QVector<int> marginMarks;
+    for (int value = 0; value <= 120; value += 3) {
+        marginMarks.append(value);
+    }
+    marginSlider->setMarkers(marginMarks);
+    verticalMarginSlider->setMarkers(marginMarks);
     typeRows->addSpacing(m::control::sectionGap);
     kobalt::ui::SegmentedRow alignment(typography, typeRows, "rrAlignment", strings::get("reader.alignment"));
     auto alignmentButton = [&](const char *name, const char *value, const QString &label, ControlIcon icon) {
@@ -86,34 +132,76 @@ AppearancePanel::AppearancePanel(const AppearanceLayout &layout, const Appearanc
         const QStringList rotationNames = {strings::get("reader.portrait"), strings::get("reader.landscape"),
                                            strings::get("reader.portrait_upside_down"),
                                            strings::get("reader.landscape_upside_down")};
+        auto inlineIconLabel = [](QPushButton *button) {
+            button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            button->setProperty("full_label", button->text());
+            button->setProperty("compact_label", QString());
+            static_cast<ui::Button *>(button)->setIconLabelGap(ui::px(20));
+        };
         const bool sideButtons = inputs.sideButtons;
-        for (int index = 0; index < rotationNames.size(); ++index) {
-            const int target = inputs.reverseLandscapeButtons && (index == 1 || index == 3) ? 4 - index : index;
+        for (int index = 0; index < (inputs.automaticRotationAvailable ? 2 : rotationNames.size()); ++index) {
+            const int target =
+                !inputs.automaticRotationAvailable && inputs.reverseLandscapeButtons && (index == 1 || index == 3)
+                    ? 4 - index
+                    : index;
             const int value = 1 << target;
             auto *button = rotation.add(QString("rrOrientation%1").arg(value));
             button->setProperty("orientation", value);
-            button->setAccessibleName(rotationNames[index]);
-            button->setToolTip(rotationNames[index]);
+            const auto label = inputs.automaticRotationAvailable
+                                   ? strings::get(index == 0 ? "reader.lock_portrait" : "reader.lock_landscape")
+                                   : rotationNames[index];
+            button->setAccessibleName(label);
+            button->setToolTip(label);
+            if (inputs.automaticRotationAvailable) {
+                button->setText(rotationNames[index]);
+                inlineIconLabel(button);
+            }
             rotationButtons.append(button);
             static_cast<ui::Button *>(button)->setIconConfiguration(
                 {static_cast<ControlIcon>(int(ControlIcon::Portrait) + index), ui::IconRendition::OriginalAsset,
                  sideButtons});
-            button->setIconSize(QSize(m::control::iconSize, m::control::iconSize));
+            button->setIconSize(inputs.automaticRotationAvailable
+                                    ? QSize(m::control::chapterIconSize, m::control::chapterIconSize)
+                                    : QSize(m::control::iconSize, m::control::iconSize));
         }
-        autoRotateOption = rotation.add("rrAutoRotate", strings::get("common.auto"));
+        autoRotateOption = rotation.add("rrAutoRotate", strings::get("reader.both"));
+        if (inputs.automaticRotationAvailable) {
+            buttonIcon(autoRotateOption, ControlIcon::RotationBoth);
+            autoRotateOption->setIconSize(QSize(m::control::chapterIconSize, m::control::chapterIconSize));
+            inlineIconLabel(autoRotateOption);
+            auto buttons = rotationButtons;
+            buttons.append(autoRotateOption);
+            new ChoiceLabels(autoRotateOption->parentWidget(), buttons);
+        }
         autoRotateOption->setAccessibleName(strings::get("reader.automatic_rotation"));
         autoRotateOption->setVisible(inputs.automaticRotationAvailable);
     }
     auto chromeSizeRow = [this, pageLayout, pageRows, &inputs](bool footer) {
         const QString name = footer ? "rrFooterTextSize" : "rrHeaderTextSize";
-        auto *row = kobalt::ui::labeledRow(pageLayout, pageRows,
-                                           footer ? strings::get("reader.footer") : strings::get("reader.header"));
-        auto *button = new kobalt::ui::DropdownButton(pageLayout);
-        button->setObjectName(name);
-        button->setMinimumWidth(m::control::captionWidth);
-        button->setText(footer ? inputs.footerCaption : inputs.headerCaption);
-        row->addWidget(button, 1);
-        (footer ? footerTextSize : headerTextSize) = button;
+        ui::SegmentedRow row(pageLayout, pageRows, name.toLatin1().constData(),
+                             strings::get(footer ? "reader.footer" : "reader.header"));
+        auto &buttons = footer ? footerSizeButtons : headerSizeButtons;
+        struct SizeChoice {
+            const char *value, *label, *compactLabel;
+        };
+        for (const auto &choice : {
+                 SizeChoice{"off", strings::key("common.off"), strings::key("common.off")},
+                 SizeChoice{"small", strings::key("common.size_small"), strings::key("common.size_small_short")},
+                 SizeChoice{"medium", strings::key("common.size_medium"), strings::key("common.size_medium_short")},
+                 SizeChoice{"large", strings::key("common.size_large"), strings::key("common.size_large_short")},
+             }) {
+            const QString value = QString::fromLatin1(choice.value);
+            const QString label = strings::get(choice.label);
+            auto *button = row.add(name + "_" + value, label);
+            button->setProperty("text_size", value);
+            button->setProperty("full_label", label);
+            button->setProperty("compact_label", strings::get(choice.compactLabel));
+            button->setAccessibleName(label);
+            button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            button->setChecked(value == (footer ? inputs.footerSize : inputs.headerSize));
+            buttons.append(button);
+        }
+        new ChoiceLabels(buttons.first()->parentWidget(), buttons);
     };
     chromeSizeRow(false);
     chromeSizeRow(true);

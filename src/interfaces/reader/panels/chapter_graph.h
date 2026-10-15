@@ -17,7 +17,8 @@ public:
                      int pages);
     // `number` counts from 1 in the contents; 0 when the position is before them.
     void setChapterNumber(int number, int count);
-    // `words` is -1 until Nickel has counted the book. The times are the rest of
+    // `words` is the shared whole-book total, or -1 when counting failed.
+    // The times are the rest of
     // the chapter and of the book at the session's pace, or -1 without a pace.
     void setReading(int minutes, qint64 words, qint64 chapterMilliseconds = -1, qint64 bookMilliseconds = -1);
     // Dense charts show every chapter on one row; sparse charts page 20 at a time.
@@ -49,6 +50,7 @@ private:
     QString error;
     QLabel *message, *chapterCaption, *chapterPage, *chapterTitle;
     QString title;
+    int progressWeight = -1;
     ui::PagerBar *pager;
     ChapterBars *bars;
     StatsCell *chapterCell, *bookCell, *sessionCell;
@@ -57,6 +59,6 @@ private:
     bool paged() const;
     int chartTop() const;
     void arrange();
-    void redraw();
+    void redraw(bool paging = false);
 };
 }

@@ -5,7 +5,7 @@ import zlib
 from xml.sax.saxutils import escape
 
 
-def book(path, nested=False, chapter_count=3, paragraphs=30, colors=False, rtl=False, cover=False, gif=False, deferred_cover=False, later_images=False, title="Native reader fixture", author="Kobalt"):
+def book(path, nested=False, chapter_count=3, paragraphs=30, colors=False, rtl=False, cover=False, gif=False, deferred_cover=False, later_images=False, title="Native reader fixture", author="Kobalt", formatting_issue=None):
     prefix = 'OEBPS/' if nested else ''
     paragraph = ('A reader keeps the chapter ready. Changing the size of the words should preserve the passage. '
                  'We can turn the page, visit another chapter, and return to the same place. ')
@@ -14,6 +14,15 @@ def book(path, nested=False, chapter_count=3, paragraphs=30, colors=False, rtl=F
         z.writestr('mimetype', 'application/epub+zip', compress_type=zipfile.ZIP_STORED)
         z.writestr('META-INF/container.xml', f'<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="{prefix}book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
         manifest = ''.join(f'<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>' for i in range(1, chapter_count + 1))
+        inspection_styles = ''
+        if formatting_issue in ('resource-budget', 'total-budget'):
+            count = 1 if formatting_issue == 'resource-budget' else 5
+            size = 3 * 1024 * 1024 if formatting_issue == 'resource-budget' else 1800000
+            for index in range(count):
+                name = f'inspection-{index}.css'
+                z.writestr(prefix + name, ' ' * size)
+                manifest += f'<item id="inspection-{index}" href="{name}" media-type="text/css"/>'
+                inspection_styles += f'<link rel="stylesheet" type="text/css" href="{name}"/>'
         if colors or cover or gif:
             def chunk(kind, data):
                 return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
@@ -68,4 +77,12 @@ def book(path, nested=False, chapter_count=3, paragraphs=30, colors=False, rtl=F
                         '<p><img src="artwork/colors.svg" width="384" height="64" alt="SVG test"/></p>'
                         '<p><svg xmlns="http://www.w3.org/2000/svg" width="64" height="24" viewBox="0 0 64 24">'
                         '<rect width="64" height="24" fill="#ff8000"/></svg></p>') + body
-            z.writestr(prefix + f'c{i}.xhtml', f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter {i}</title></head><body><h1><span class="koboSpan" id="kobo.1.1">Chapter {i}</span></h1>{body}</body></html>')
+            if formatting_issue == 'html-entity':
+                body += '<p>Readable text&nbsp;with an HTML entity.</p>'
+            style = '<link rel="stylesheet" href="missing.css"/>' if formatting_issue == 'missing-css' else ''
+            if formatting_issue == 'adobe-template':
+                style = '<link rel="stylesheet" type="application/adobe-page-template+xml" href="missing.xpgt"/>'
+            if formatting_issue == 'unsupported-writing':
+                style = '<style>body { writing-mode: vertical-lr; }</style>'
+            style += inspection_styles
+            z.writestr(prefix + f'c{i}.xhtml', f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter {i}</title>{style}</head><body><h1><span class="koboSpan" id="kobo.1.1">Chapter {i}</span></h1>{body}</body></html>')

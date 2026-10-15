@@ -23,7 +23,7 @@ QByteArray read(const QString &path) {
 }
 
 int main() {
-    // Keys: Kobo's book ID for purchased books, the content fingerprint for files.
+    // Keep legacy UUID keys, hash other server IDs, and fingerprint files.
     require(BookmarkStore::bookKey("3F2A1B4C-0000-4000-8000-00000000ABCD", {}) ==
                 "kobo-3f2a1b4c-0000-4000-8000-00000000abcd",
             "A purchased book is not keyed by its Kobo ID");
@@ -33,9 +33,28 @@ int main() {
     require(BookmarkStore::bookKey("file:///mnt/onboard/a.epub", "short").isEmpty(),
             "An invalid fingerprint gave a key");
     require(BookmarkStore::bookKey("../../etc", fingerprint).isEmpty(), "An unknown identity gave a key");
+    const auto numericKey = BookmarkStore::bookKey("12345", {});
+    require(numericKey.startsWith("kobo-id-") && numericKey.size() == 72 &&
+                numericKey == BookmarkStore::bookKey("12345", fingerprint),
+            "A numeric server ID did not get a stable bookmark key");
+    require(BookmarkStore::bookKey("Server-ID", {}) != BookmarkStore::bookKey("server-id", {}),
+            "Distinct server IDs shared their bookmarks");
+    for (const auto &identity : {QString(), QStringLiteral("."), QStringLiteral(".."), QStringLiteral("folder\\book"),
+                                 QString("book") + QChar(0) + "other"}) {
+        require(BookmarkStore::bookKey(identity, fingerprint).isEmpty(), "Unsafe server ID got an annotation key");
+    }
 
     QTemporaryDir root;
     require(root.isValid(), "No temporary folder");
+    {
+        BookmarkStore numeric(root.path(), "12345", fingerprint, "Numeric server book");
+        require(numeric.load(), "Bookmarks were unavailable for a numeric server ID");
+        numeric.setBookmarks({mark("/body/DocFragment[1]/body/p[1].0", "2026-09-20T10:00:00Z")});
+        require(numeric.save(), "Cannot save a numeric server book's bookmark");
+        BookmarkStore reopened(root.path(), "12345", fingerprint, "Numeric server book");
+        require(reopened.load() && reopened.bookmarks().size() == 1,
+                "Numeric server bookmarks did not survive reopening");
+    }
     {
         BookmarkStore store(root.path(), "file:///mnt/onboard/a.epub", fingerprint, "A");
         require(store.load() && store.bookmarks().isEmpty(), "A new book did not start empty");

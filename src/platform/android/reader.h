@@ -4,11 +4,11 @@
 #include "reading/reader_session.h"
 #include "interfaces/reader_window.h"
 #include "storage/reader_storage.h"
-#include "publication/resource_server.h"
+#include "publication/publication_endpoint.h"
 #include <QPointer>
 
 namespace kobalt::android {
-// Own the publication until engine work and network replies have drained.
+// Own the publication until engine work has drained.
 // A newer document replaces a pending opening; closing always cancels it.
 class ReaderController : public QObject {
     Q_OBJECT
@@ -46,7 +46,7 @@ private:
     QSize pendingSize;
     std::function<ReaderHostServices()> services;
     ReaderOrientation orientation;
-    std::unique_ptr<native::ResourceServer> server;
+    std::unique_ptr<native::PublicationEndpoint> source;
     std::unique_ptr<ReaderSession> opening;
     QPointer<ReaderWindow> window_;
     std::shared_ptr<SourceLease> lease;

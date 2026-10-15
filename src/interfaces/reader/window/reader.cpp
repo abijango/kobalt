@@ -1,5 +1,6 @@
 #include "interfaces/reader/ui/controls/buttons.h"
 #include "interfaces/reader/ui/controls/icons.h"
+#include "interfaces/reader/ui/controls/paging.h"
 #include "interfaces/reader/ui/controls/panels.h"
 #include "interfaces/reader/ui/dialogs/modals.h"
 #include "interfaces/reader/ui/style/theme.h"
@@ -40,9 +41,6 @@ using kobalt::platform::textRefresh;
 using kobalt::Choice;
 
 Reader::~Reader() {
-    if (sleepExportPending && services.finishSleepExport)
-        services.finishSleepExport();
-    sleepExportPending = false;
     model->renderProgressChanged = {};
     renderNoticeTimer.stop();
     model->cancelPendingTurn();
@@ -62,6 +60,14 @@ void Reader::checkpoint() {
 }
 
 void Reader::prepareShutdown(std::function<void()> finished) {
+    prepareTransition(std::move(finished), 0);
+}
+void Reader::prepareUsb(std::function<void()> finished) {
+    prepareTransition(std::move(finished), 2000);
+}
+void Reader::prepareTransition(std::function<void()> finished, int timeoutMs) {
+    auto elapsed = std::make_shared<QElapsedTimer>();
+    elapsed->start();
     model->cancelPendingTurn();
     book->stopReading();
     lifecycleHidden = true;
@@ -70,14 +76,35 @@ void Reader::prepareShutdown(std::function<void()> finished) {
     clockTimer->stop();
     setEnabled(false);
     save(true);
-    model->nativePosition([this, finished](const QString &location, const QString &error) {
-        // A pending sync conflict keeps its native bookmark and the local
-        // checkpoint. Shutdown cannot wait for a new confirmation dialog.
-        book->writeNative(location, error);
-        save(true);
-        reportNativeProgress("shutdown");
-        finished();
-    });
+    auto completed = std::make_shared<bool>(false);
+    if (timeoutMs) {
+        kobalt::qt::later(qMax(0, timeoutMs - int(elapsed->elapsed())), this, [completed, finished] {
+            if (std::exchange(*completed, true)) {
+                return;
+            }
+            kobalt::diagnostic("usb-save-timeout");
+            finished();
+        });
+    }
+    model->nativePosition(
+        [this, completed, elapsed, timeoutMs, finished](const QString &location, const QString &error) {
+            if (std::exchange(*completed, true)) {
+                return;
+            }
+            if (timeoutMs && elapsed->elapsed() >= timeoutMs) {
+                kobalt::diagnostic("usb-save-timeout");
+            } else {
+                // Keep a newer Nickel bookmark if reconciliation or the locked
+                // comparison rejects this save. Device transitions cannot ask
+                // the reader to resolve a conflict before they continue.
+                book->writeNative(location, error);
+                save(true);
+                // Queue Hardcover after the native save. The command does not
+                // block USB or shutdown, and it does not hold suspend.
+                reportNativeProgress(timeoutMs ? "usb" : "shutdown");
+            }
+            finished();
+        });
 }
 
 void Reader::sleepReader() {
@@ -90,6 +117,7 @@ void Reader::sleepReader() {
     page->animationDirection = 0;
     setProperty("reader_animation_direction", 0);
     appearanceEdit.clearContinuation();
+    saveNativeProgress();
     checkpoint();
     closeSearch();
     dismissLookup();
@@ -101,9 +129,10 @@ void Reader::sleepReader() {
     if (finishDialog)
         finishDialog->hide();
     // Keep the page on screen until Nickel's sleep view replaces it, as in
-    // Nickel's own reader. sleepViewReady() submits that view. The native
-    // save finishes before suspend; a Hardcover update stays queued.
-    exportSleepProgress();
+    // Nickel's own reader. sleepViewReady() submits that view. Native progress
+    // was stored from the displayed frame above. Hardcover is queued afterwards
+    // and does not hold suspend.
+    reportNativeProgress("sleep");
 }
 
 void Reader::prepareWake() {
@@ -154,6 +183,31 @@ void Reader::wakeReader() {
     });
 }
 
+void Reader::saveNativeProgress() {
+    if (!book->canWriteNative() || model->image().isNull() || !model->error().isEmpty() || appearanceEdit.panelOpen() ||
+        importingProgress || syncDialog) {
+        return;
+    }
+    const auto anchor = model->state().value("position").toString();
+    if (anchor.isEmpty() ||
+        (anchor == savedNativeAnchor && model->page() == savedNativePage && model->pages() == savedNativePages)) {
+        return;
+    }
+    QString error;
+    const auto location = model->savedNativePosition(&error);
+    if (!book->writeNative(location, error)) {
+        return;
+    }
+    QJsonObject state;
+    book->checkpoint(&state);
+    const auto result = state.value("native_writeback").toString();
+    if (result == "verified" || result == "time-only") {
+        savedNativeAnchor = anchor;
+        savedNativePage = model->page();
+        savedNativePages = model->pages();
+    }
+}
+
 void Reader::progressTick() {
     if (closing || exportRunning)
         return;
@@ -174,9 +228,18 @@ void Reader::progressTick() {
 }
 
 QVector<QWidget *> Reader::popups() const {
-    return {busyNotice,          brightnessNotice,          fontDefaultDialog.data(), linkDialog.data(),
-            debugDialog.data(),  syncDialog.data(),         finishDialog.data(),      refreshPopup.data(),
-            removeDialog.data(), bookmarkErrorDialog.data()};
+    return {busyNotice,
+            brightnessNotice,
+            fontDefaultDialog.data(),
+            linkDialog.data(),
+            debugDialog.data(),
+            syncDialog.data(),
+            finishDialog.data(),
+            refreshPopup.data(),
+            removeDialog.data(),
+            bookmarkErrorDialog.data(),
+            formattingWarningDialog.data(),
+            settingsWriteErrorDialog.data()};
 }
 
 bool Reader::popup(QObject *object) const {
@@ -201,18 +264,69 @@ bool Reader::event(QEvent *event) {
         // Only the plain reading bars can cross an unchanged text page
         // with a partial refresh. Other panels may contain color.
         setProperty("reader_plain_controls",
-                    !appearanceEdit.preview() && !general->isVisible() && !choices->isVisible() &&
+                    !appearanceEdit.panelOpen() && !general->isVisible() && !choices->isVisible() &&
                         !chapterGraph->isVisible() && !linkReturn->isVisible() && !dictionaryPanel->isVisible() &&
                         !searchPanel->isVisible() && !linksActive() && !lookupPending &&
                         !acknowledgments->isVisible() && !bookmarkList->isVisible() && !lightPopup->isVisible() &&
                         !busyNotice->isVisible() && !syncDialog && !finishDialog && !bookmarkErrorDialog &&
-                        !services.suspended() && page->image.text("kobalt.animation_text_only") == "true");
+                        !formattingWarningDialog && !settingsWriteErrorDialog && !services.suspended() &&
+                        page->image.text("kobalt.animation_text_only") == "true");
+        // These panels hold text and line controls. Changes inside them can
+        // use a partial refresh; showing the whole panel keeps its policy.
+        QWidget *partialPanel = nullptr;
+        if (lightPopup->isVisible()) {
+            partialPanel = lightPopup;
+        } else if (appearanceEdit.panelOpen() && menu->isVisible() && !busyNotice->isVisible() &&
+                   !choices->isVisible()) {
+            partialPanel = menu;
+        }
+        setProperty("reader_partial_controls",
+                    partialPanel ? QRect(partialPanel->mapTo(this, QPoint()), partialPanel->size()) : QRect());
     }
     return QWidget::event(event);
 }
 
 bool Reader::eventFilter(QObject *watched, QEvent *event) {
     const auto type = event->type();
+    if (watched == brightnessNotice && type == QEvent::Hide && isVisible() && !lifecycleHidden && !closing &&
+        !exportRunning && !exitPending && !services.suspended()) {
+        requestFlash("light-swipe");
+        page->update();
+    }
+    // Kobo screens have no hover. Qt still sends hover events when a touch
+    // moves between widgets, and repaints any widget that tracks hover, which
+    // refreshes unchanged pixels. No reader widget draws a hover state.
+    if (ui::isHoverEvent(event)) {
+        auto *target = qobject_cast<QWidget *>(watched);
+        if (target && (target == this || isAncestorOf(target)))
+            return true;
+    }
+    // While a panel's changes apply, its controls ignore input. Disabling
+    // them instead would repaint the whole visible panel in disabled colors,
+    // one more screen update before it closes.
+    const bool controlInput = type == QEvent::MouseButtonPress || type == QEvent::MouseButtonRelease ||
+                              type == QEvent::MouseButtonDblClick || type == QEvent::MouseMove ||
+                              type == QEvent::TouchBegin || type == QEvent::TouchUpdate || type == QEvent::TouchEnd ||
+                              type == QEvent::KeyPress || type == QEvent::KeyRelease || type == QEvent::Shortcut;
+    if (appearanceEdit.applying() && controlInput) {
+        auto *target = qobject_cast<QWidget *>(watched);
+        if (target &&
+            (target == menu || target == general || menu->isAncestorOf(target) || general->isAncestorOf(target))) {
+            event->accept();
+            return true;
+        }
+    }
+    // Reflow temporarily blocks rotation without repainting its buttons in
+    // disabled colors. Keep the selected orientation visible until it changes.
+    auto *rotationButton = qobject_cast<QPushButton *>(watched);
+    if (controlInput && rotationButton &&
+        (rotationButtons.contains(rotationButton) || rotationButton == autoRotateOption) && rotationControlsBlocked()) {
+        event->accept();
+        return true;
+    }
+    if (watched == menu && type == QEvent::Paint) {
+        schedulePreviewWarm();
+    }
     // Panels declare their placement through geometry. The reading status strip
     // owns its separator, including when an existing panel moves or closes.
     if (watched->parent() == this && dynamic_cast<ui::Panel *>(watched) &&
@@ -382,8 +496,8 @@ void Reader::resizeEvent(QResizeEvent *) {
     header->setVisible(page->topHeight() > 0);
     topControls->setGeometry(0, 0, width(), navigation ? navigation->toolbarHeight() : m::panel::toolbarHeight);
     bottomControls->setGeometry(m::panel::footer(size()));
-    menu->setGeometry(m::panel::appearance(size(), panels->currentIndex() == 1));
-    chapterGraph->setGeometry(0, m::panel::toolbarHeight, width(), m::chapters::graphHeight);
+    menu->resize(m::panel::appearance(size(), panels->currentIndex() == 1).size());
+    chapterGraph->resize(width(), chapterGraph->height());
     choices->setGeometry(rect());
     fitSettings();
     acknowledgments->setGeometry(rect());
@@ -415,7 +529,7 @@ void Reader::closeEvent(QCloseEvent *event) {
         event->ignore();
         exitPending = true;
         save(true);
-        if (appearanceEdit.preview() || general->isVisible())
+        if (appearanceEdit.panelOpen() || general->isVisible())
             dismissControls();
         finishExit();
         return;
@@ -438,12 +552,17 @@ void Reader::closeEvent(QCloseEvent *event) {
     QWidget::closeEvent(event);
 }
 
+bool Reader::rotationControlsBlocked() const {
+    return model->busy() || (appearanceEdit.edited() && appearanceEdit.preview()->busy());
+}
+
 void Reader::updateOrientationBlock() {
     if (orientation)
         orientation->setBlocked(lifecycleHidden || services.suspended() || topControls->isVisible() || model->busy() ||
-                                bool(appearanceEdit.preview()) || bool(syncDialog) || bool(finishDialog) ||
-                                bool(bookmarkErrorDialog) || dictionaryPanel->isVisible() || searchPanel->isVisible() ||
-                                linksActive() || lookupPending);
+                                appearanceEdit.panelOpen() || bool(syncDialog) || bool(finishDialog) ||
+                                bool(bookmarkErrorDialog) || bool(formattingWarningDialog) ||
+                                bool(settingsWriteErrorDialog) || dictionaryPanel->isVisible() ||
+                                searchPanel->isVisible() || linksActive() || lookupPending);
 }
 
 void Reader::closeSearch() {
@@ -460,7 +579,7 @@ void Reader::closeSearch() {
 
 void Reader::openSearch() {
     model->cancelPendingTurn();
-    if (model->busy() || appearanceEdit.preview() || appearanceEdit.applying())
+    if (model->busy() || appearanceEdit.panelOpen() || appearanceEdit.applying())
         return;
     dismissLookup();
     dismissControls();
@@ -660,7 +779,7 @@ void Reader::dismissLookup(bool keepGesture) {
 }
 
 void Reader::lookupWord(QPoint point, bool checkLink) {
-    if (closing || lifecycleHidden || services.suspended() || model->busy() || appearanceEdit.preview() ||
+    if (closing || lifecycleHidden || services.suspended() || model->busy() || appearanceEdit.panelOpen() ||
         topControls->isVisible() || choices->isVisible() || acknowledgments->isVisible() || syncDialog ||
         finishDialog || dictionaryPanel->isVisible() || searchPanel->isVisible() || linksActive())
         return;
@@ -743,7 +862,7 @@ void Reader::configureNavigation() {
             if (target == AppearanceDestination::Chapters && choices->isVisible() && !choosingTypography) {
                 choices->hide();
                 showControls();
-            } else if (appearanceEdit.preview() || general->isVisible()) {
+            } else if (appearanceEdit.panelOpen() || general->isVisible()) {
                 appearanceEdit.request(target);
                 if (general->isVisible())
                     applySettings();
@@ -810,7 +929,7 @@ void Reader::syncLinkDiscovery() {
     if (!linkDiscovery)
         return;
     const bool blocked = model->busy() || lifecycleHidden || closing || services.suspended() ||
-                         appearanceEdit.preview() || general->isVisible() || menu->isVisible() ||
+                         appearanceEdit.panelOpen() || general->isVisible() || menu->isVisible() ||
                          choices->isVisible() || chapterGraph->isVisible() || lightPopup->isVisible() ||
                          bookmarkList->isVisible() || acknowledgments->isVisible() || searchPanel->isVisible() ||
                          dictionaryPanel->isVisible() || linksActive() || lookupPending || syncDialog || finishDialog;
@@ -940,7 +1059,7 @@ void Reader::syncNavigation() {
     if (!navigation)
         return;
     if (topControls->isVisible()) {
-        auto *settings = appearanceEdit.preview() && appearanceEdit.ready() ? appearanceEdit.preview() : model;
+        auto *settings = appearanceEdit.edited() && appearanceEdit.ready() ? appearanceEdit.preview() : model;
         QString face = settings->fontFace();
         if (face.isEmpty())
             face = settings->state().value("text_font_face").toString();
@@ -997,7 +1116,9 @@ void Reader::syncNavigation() {
                 chapterGraph->hide();
             else {
                 updateGraph();
+                chapterGraph->setGeometry(navigation->panelBounds(size(), chapterGraph->height()));
                 chapterGraph->open();
+                navigation->stackPanel(chapterGraph);
             }
             update();
         }
@@ -1020,8 +1141,15 @@ void Reader::syncNavigation() {
 }
 
 void Reader::showControls() {
+    const bool topVisible = topControls->isVisible();
+    const bool opening = !topVisible && !bottomControls->isVisible();
     model->cancelPendingTurn();
-    flashAfterMenu = false;
+    if (opening) {
+        flashAfterMenu = property("reader_dark").toBool();
+        if (flashAfterMenu) {
+            requestFlash("menu-open");
+        }
+    }
     dismissLinks();
     linkReturn->hide();
     updateMenuStatus();
@@ -1030,10 +1158,20 @@ void Reader::showControls() {
     page->cleanRefresh(false);
     topControls->show();
     bottomControls->show();
-    topControls->raise();
-    bottomControls->raise();
+    if (!topVisible) {
+        topControls->raise();
+    }
+    if (!navigation) {
+        bottomControls->raise();
+    }
     updateLinkReturn();
     syncNavigation();
+    if (opening) {
+        // The display submits disjoint bars separately. Paint their completed
+        // frame together so they appear in one screen update.
+        setProperty("reader_controls_opening", true);
+        update();
+    }
 }
 
 void Reader::dismissControls() {
@@ -1042,7 +1180,7 @@ void Reader::dismissControls() {
     chapterGraph->hide();
     if (appearanceEdit.applying())
         return;
-    if (general->isVisible() || appearanceEdit.preview()) {
+    if (general->isVisible() || appearanceEdit.panelOpen()) {
         appearanceEdit.request(AppearanceDestination::Reading);
         if (general->isVisible())
             applySettings();
@@ -1071,7 +1209,7 @@ void Reader::toggleLight() {
     choices->hide();
     if (general->isVisible())
         applySettings();
-    else if (appearanceEdit.preview())
+    else if (appearanceEdit.panelOpen())
         finishPreview();
     else {
         appearanceEdit.clearDestination();
@@ -1122,7 +1260,7 @@ void Reader::toggleGraph() {
     choices->hide();
     if (general->isVisible())
         applySettings();
-    else if (appearanceEdit.preview())
+    else if (appearanceEdit.panelOpen())
         finishPreview();
     else {
         appearanceEdit.clearDestination();
@@ -1136,18 +1274,42 @@ void Reader::openGraph() {
     general->hide();
     choices->hide();
     topControls->show();
-    topControls->raise();
     bottomControls->hide();
+    updateGraph();
+    if (navigation)
+        chapterGraph->setGeometry(navigation->panelBounds(size(), chapterGraph->height()));
     chapterGraph->open();
+    if (navigation)
+        navigation->stackPanel(chapterGraph);
     refresh();
+}
+
+// A fullscreen list pages with the hardware buttons, as with its own arrows.
+// Returns whether such a list is open; the book behind it never turns.
+bool Reader::pageList(int direction) {
+    QWidget *list = choices->isVisible() && !choosingTypography ? static_cast<QWidget *>(choices)
+                    : bookmarkList->isVisible()                 ? static_cast<QWidget *>(bookmarkList)
+                    : searchPanel->isVisible()                  ? static_cast<QWidget *>(searchPanel)
+                    : acknowledgments->isVisible()              ? acknowledgments
+                                                                : nullptr;
+    if (!list)
+        return false;
+    // PagerBar has no meta-object, so qobject_cast cannot select it.
+    for (auto *child : list->findChildren<QWidget *>()) {
+        auto *pager = dynamic_cast<ui::PagerBar *>(child);
+        if (!pager || !pager->isVisible())
+            continue;
+        auto *button = direction > 0 ? pager->next : pager->previous;
+        if (button->isVisible() && button->isEnabled())
+            button->click();
+        break;
+    }
+    return true;
 }
 
 void Reader::pageButton(int direction) {
     if ((direction != -1 && direction != 1) || !isEnabled() || !isVisible() || lifecycleHidden ||
-        services.suspended() || closing || !model->canTurn() || appearanceEdit.preview() || general->isVisible() ||
-        choices->isVisible() || (chapterGraph->isVisible() && !statsPinned()) || revealingLinks ||
-        dictionaryPanel->isVisible() || searchPanel->isVisible() || linksActive() || lookupPending ||
-        acknowledgments->isVisible() || bookmarkList->isVisible() || lightPopup->isVisible())
+        services.suspended() || closing)
         return;
     const auto *modal = QApplication::activeModalWidget();
     if (modal && modal != this)
@@ -1155,14 +1317,21 @@ void Reader::pageButton(int direction) {
     for (auto *widget : popups())
         if (widget && widget->isVisible() && dynamic_cast<ui::ModalOverlay *>(widget))
             return;
+    if (pageList(direction))
+        return;
+    if (!model->canTurn() || appearanceEdit.panelOpen() || general->isVisible() || choices->isVisible() ||
+        (chapterGraph->isVisible() && !statsPinned()) || revealingLinks || dictionaryPanel->isVisible() ||
+        searchPanel->isVisible() || linksActive() || lookupPending || acknowledgments->isVisible() ||
+        bookmarkList->isVisible() || lightPopup->isVisible())
+        return;
     turnPage(direction);
 }
 
 void Reader::turnPage(int direction) {
     turnStarted.start();
-    if (finishDialog || syncDialog || bookmarkErrorDialog || !model->canTurn() || closing || exitPending ||
-        lifecycleHidden || services.suspended() || book->deviceTransition() || appearanceEdit.preview() ||
-        appearanceEdit.applying())
+    if (finishDialog || syncDialog || bookmarkErrorDialog || formattingWarningDialog || settingsWriteErrorDialog ||
+        !model->canTurn() || closing || exitPending || lifecycleHidden || services.suspended() ||
+        book->deviceTransition() || appearanceEdit.panelOpen() || appearanceEdit.applying())
         return;
     if (!model->busy() && direction > 0 && model->nextPage() == model->page() && book->offerFinish()) {
         showFinishChoice();
@@ -1202,19 +1371,14 @@ void Reader::recordOpening() {
         syncDialog || finishDialog || services.suspended() || book->deviceTransition())
         return;
     recordedOpening = true;
-    model->nativePosition([this](const QString &location, const QString &mappingError) {
-        if (closing || lifecycleHidden)
-            return;
-        // A newer synced position waits for the reader's choice; the
-        // sync dialog asks, and exit saves afterwards.
-        book->writeNative(location, mappingError);
-        save(true);
-        reportNativeProgress("open");
-    });
+    // A newer synced position waits for the reader's choice.
+    saveNativeProgress();
+    save(true);
+    reportNativeProgress("open");
 }
 
 void Reader::finishExit() {
-    if (!exitPending || closing || exportRunning || model->busy() || appearanceEdit.preview() ||
+    if (!exitPending || closing || exportRunning || model->busy() || appearanceEdit.panelOpen() ||
         appearanceEdit.applying() || appearanceEdit.finishPending() || lifecycleHidden)
         return;
     if (finishDialog)
@@ -1259,21 +1423,8 @@ void Reader::reportNativeProgress(const char *reason) {
         services.reportReadingProgress(book->identity(), book->nativePercent());
         return;
     }
-    // Opening, closing or sleeping still retries an update queued earlier.
+    // Opening, closing, sleeping, USB and shutdown still retry an update queued earlier.
     services.reportReadingProgress({}, -1);
-}
-
-void Reader::exportSleepProgress() {
-    sleepExportPending = true;
-    model->nativePosition([this](const QString &location, const QString &error) {
-        sleepExportPending = false;
-        // An unfinished layout has no page count yet. Leave Nickel's percent.
-        if (model->pages() > 0 && book->writeNative(location, error, ReadingBook::NativeWrite::Sleep))
-            save(true);
-        reportNativeProgress("sleep");
-        if (services.finishSleepExport)
-            services.finishSleepExport();
-    });
 }
 
 // A page turn does not have to reach storage before the next one. Write
@@ -1328,26 +1479,22 @@ void Reader::save(bool snapshot) {
         links.append(kobalt::qt::object({{"source", link.source}, {"rectangles", rectangles}}));
     }
     state["links"] = links;
-    if (book->chapters()) {
-        const auto &native = book->chapters()->data();
-        QJsonArray counts, locations, titles, pages;
-        for (const auto &chapter : native.graph) {
-            counts.append(chapter.words);
-            locations.append(chapter.location);
-            titles.append(chapter.title);
-        }
-        for (const auto &chapter : model->chapterGraph())
-            pages.append(chapter.page);
-        state["native_chapters"] = kobalt::qt::object({{"ready", native.ready},
-                                                       {"error", native.error},
-                                                       {"total_words", native.totalWords},
-                                                       {"words", counts},
-                                                       {"locations", locations},
-                                                       {"titles", titles},
-                                                       {"mapped_pages", pages},
-                                                       {"current", model->graphSelection().current},
-                                                       {"next", model->graphSelection().next}});
+    QJsonArray counts, positions, titles, pages;
+    for (const auto &chapter : model->chapterGraph()) {
+        counts.append(double(chapter.words));
+        positions.append(chapter.position);
+        titles.append(chapter.title);
+        pages.append(chapter.page);
     }
+    state["word_counts"] = kobalt::qt::object({{"ready", model->totalWords() >= 0},
+                                               {"total_words", double(model->totalWords())},
+                                               {"words", counts},
+                                               {"positions", positions},
+                                               {"titles", titles},
+                                               {"mapped_pages", pages},
+                                               {"current", model->graphSelection().current},
+                                               {"next", model->graphSelection().next}});
+
 #endif
     state["resource_cache"] = model->resourceStats();
     state["busy"] = model->busy();
@@ -1388,10 +1535,11 @@ void Reader::save(bool snapshot) {
     state["graph_page"] = chapterGraph->graphPage();
     state["graph_pages"] = chapterGraph->graphPages();
     state["active_panel"] =
-        QString::fromLatin1(chapterGraph->isVisible()  ? "chapters"
-                            : general->isVisible()     ? "settings"
-                            : appearanceEdit.preview() ? panels->currentIndex() == 0 ? "typography" : "layout"
-                                                       : "");
+        QString::fromLatin1(chapterGraph->isVisible()    ? "chapters"
+                            : general->isVisible()       ? "settings"
+                            : appearanceEdit.panelOpen() ? panels->currentIndex() == 0 ? "typography" : "layout"
+                                                         : "");
+    state["appearance_panel_open"] = appearanceEdit.panelOpen();
     state["preview_ready"] = appearanceEdit.ready();
     state["preview_busy"] = appearanceEdit.preview() && appearanceEdit.preview()->busy();
     state["preview_settings"] = appearanceEdit.ready() ? appearanceEdit.preview()->state() : QJsonObject();

@@ -16,7 +16,7 @@ set(KOBALT_INTEGRATION_SOURCES
     src/platform/nickel/common/native_lifecycle.cpp src/platform/nickel/qt6/native_lifecycle.cpp src/platform/nickel/common/native_lifecycle.h src/platform/nickel/qt6/native_dictionary.cpp src/platform/nickel/common/native_dictionary.h src/platform/nickel/qt6/native_light.cpp src/platform/nickel/common/native_light.h
     ${KOBALT_ARCHIVE_SOURCE} src/publication/resource_server.cpp src/publication/loopback.cpp
     ${KOBALT_PROVIDER_SOURCE} src/platform/nickel/common/publication_source.cpp
-    src/platform/nickel/qt6/native_chapters.cpp src/platform/nickel/qt6/native_ui.cpp ${KOBALT_PUBLICATION_SOURCES} src/publication/native_resources.cpp)
+    src/platform/nickel/qt6/native_ui.cpp ${KOBALT_PUBLICATION_SOURCES} src/publication/native_resources.cpp)
 # Model checks compile these adapters by themselves.
 set(KOBALT_AUTHORIZATION_SOURCES src/platform/nickel/qt6/native_authorization.cpp src/platform/nickel/common/native_authorization.h)
 set(KOBALT_LIFECYCLE_SOURCES src/platform/nickel/common/native_lifecycle.cpp src/platform/nickel/qt6/native_lifecycle.cpp src/platform/nickel/common/native_lifecycle.h)

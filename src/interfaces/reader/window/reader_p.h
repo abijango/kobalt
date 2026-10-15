@@ -43,8 +43,6 @@
 #include <memory>
 
 namespace kobalt::reader {
-QString sizeLabel(const QString &value);
-
 // Input and accessibility target only. The cached header image supplies its
 // pixels and invalidates only the part whose text changed.
 class ChapterHeader : public QPushButton {
@@ -62,6 +60,7 @@ public:
     void refreshRenderNotice();
     bool readyForPresentation() const override;
     void checkpoint() override;
+    void prepareUsb(std::function<void()> finished) override;
     void prepareShutdown(std::function<void()> finished) override;
     void sleepReader() override;
     void prepareWake() override;
@@ -84,8 +83,12 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    void prepareTransition(std::function<void()> finished, int timeoutMs);
     // Construction, in this order. Each step builds one group of widgets and
     // connects its signals.
+    void saveNativeProgress();
+    QString savedNativeAnchor;
+    int savedNativePage = -1, savedNativePages = -1;
     void buildReadingPage();
     void startClockTimer();
     void buildToolbar();
@@ -137,7 +140,7 @@ private:
     QVector<QWidget *> topActions;
     kobalt::ui::Panel *general;
     std::unique_ptr<kobalt::LightControls> light;
-    kobalt::LightPanel *lightPopup;
+    kobalt::LightPanel *lightPopup = nullptr;
     QCheckBox *darkOption, *smoothOption, *progressOption, *animationOption, *edgeLightOption, *denseGraphOption,
         *pinStatsOption, *heavierTextOption;
     QPushButton *autoRotateOption, *clockOption, *clockHideOption;
@@ -166,10 +169,14 @@ private:
     QVector<QPushButton *> rotationButtons;
     bool restoringDefaults = false, themeReady = false, darkTheme = false;
     kobalt::ui::FontButton *fontButton;
-    QVector<QPushButton *> alignmentButtons, hyphenButtons;
+    QVector<QPushButton *> alignmentButtons, hyphenButtons, headerSizeButtons, footerSizeButtons;
+    void syncChromeSizeButtons();
     kobalt::ui::SettingSlider *sizeSlider, *opticalSizeSlider, *weightSlider, *variableWeightSlider, *spacingSlider,
         *marginSlider, *verticalMarginSlider, *bookSlider;
     kobalt::reader::AppearanceEditSession appearanceEdit;
+    QSize appearanceViewport;
+    quint64 warmScheduledGeneration = 0;
+    quint64 warmAttemptGeneration = 0;
     using AppearanceDestination = kobalt::reader::AppearanceEditSession::Destination;
     QVector<int> registeredFonts;
     QStringList pickerNativeFamilies;
@@ -184,6 +191,7 @@ private:
     int searchOriginalPage = 0;
     kobalt::SearchHit pendingSearchHit;
     void updateOrientationBlock();
+    bool rotationControlsBlocked() const;
     void closeSearch();
     void openSearch();
     kobalt::LinkPanel *linkPanel = nullptr;
@@ -205,7 +213,7 @@ private:
     QLabel *linkDiscoveryIcon = nullptr, *linkDiscoveryHint = nullptr;
     QPushButton *linkDiscoveryToggle = nullptr;
     QLabel *linkDiscoveryExit = nullptr;
-    QCheckBox *linkIndicatorOption = nullptr;
+    QCheckBox *linkIndicatorOption = nullptr, *hideNonlinearOption = nullptr;
     bool revealingLinks = false;
     QString revealedPosition;
     void syncLinkDiscovery();
@@ -246,12 +254,17 @@ private:
     void openSettings();
     void applyEdgeLight();
     void applyDarkMode(bool enabled);
+    void applyBoldReading(bool enabled);
     void applyHeavierText(bool enabled);
     void applySettings();
     bool writePreferences(const QJsonObject &next);
+    void showSettingsWriteError();
     void selectPanel(int index);
     void openPanel(int index);
+    void schedulePreviewWarm();
+    void mutateAppearance(std::function<void(ReaderSession &)> operation);
     void finishPreview();
+    void resumeAppearanceApply();
     void showChapters();
     void toggleGraph();
     void openGraph();
@@ -263,6 +276,7 @@ private:
     void showProgressChoice();
     void buildProgressChoice(const kobalt::ReadingProgress &shown, int direction, bool located);
     void turnPage(int direction);
+    bool pageList(int direction);
     // Runs from a tap or swipe until its page is painted; invalid otherwise.
     QElapsedTimer turnStarted;
     // Exit Kobalt ignores taps from when the chapter list closes until a short
@@ -289,12 +303,14 @@ private:
     void syncBookmarks();
     kobalt::BookmarkList *bookmarkList = nullptr;
     QPointer<kobalt::ui::ModalOverlay> removeDialog;
-    QPointer<kobalt::ui::ModalOverlay> bookmarkErrorDialog;
+    QPointer<kobalt::ui::ModalOverlay> bookmarkErrorDialog, settingsWriteErrorDialog;
+    QPointer<kobalt::ui::ModalOverlay> formattingWarningDialog;
     QVector<kobalt::BookmarkRow> bookmarkRows() const;
     void openBookmarks();
     void askRemoveBookmark(const QString &position);
     void toggleBookmark();
     void showBookmarkError();
+    void showFormattingWarning();
     bool flashAfterMenu = false;
     void requestFlash(const char *reason);
     QTimer *saveTimer = nullptr;
@@ -309,9 +325,7 @@ private:
     void recordOpening();
     void finishExit();
     void reportNativeProgress(const char *reason);
-    void exportSleepProgress();
     void applyHardcoverSync(bool enabled);
-    bool sleepExportPending = false;
     void saveSoon();
     void save(bool snapshot = false);
 };

@@ -12,7 +12,6 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QPainter>
-#include <QTextDocument>
 #include <QtMath>
 
 namespace kobalt {
@@ -78,11 +77,11 @@ SearchPanel::SearchPanel(QWidget *parent, KeyboardFactory makeKeyboard) : ui::Pa
     });
     pager = new ui::PagerBar(this, "rrSearch");
     connect(pager->previous, &QPushButton::clicked, this, [this] {
-        --resultPage;
+        resultPage = pager->turnTarget(-1);
         redraw();
     });
     connect(pager->next, &QPushButton::clicked, this, [this] {
-        ++resultPage;
+        resultPage = pager->turnTarget(1);
         redraw();
     });
     empty = new QLabel(this);
@@ -234,17 +233,13 @@ void SearchPanel::redraw() {
     if (!rowHeight || measuredWidth != width()) {
         measuredWidth = width();
         // Room for two excerpt lines, or for a long bold match on its own.
-        QTextDocument measure;
-        measure.setDocumentMargin(0);
-        measure.setDefaultFont(font);
-        measure.setTextWidth(textWidth);
         QStringList sample;
         for (int line = 0; line < m::search::excerptLines; ++line)
             sample.append("M");
-        measure.setHtml(excerptBlock.arg(sample.join("<br>")));
-        qreal lines = measure.size().height();
-        measure.setHtml(excerptBlock.arg("<b><u>" + submittedQuery.toHtmlEscaped() + "</u></b>"));
-        lines = qMax(lines, measure.size().height());
+        qreal lines = ui::excerptTextHeight(excerptBlock.arg(sample.join("<br>")), font, textWidth);
+        lines =
+            qMax(lines, ui::excerptTextHeight(excerptBlock.arg("<b><u>" + submittedQuery.toHtmlEscaped() + "</u></b>"),
+                                              font, textWidth));
         rowHeight = qMax(int(m::list::threeLines), m::search::excerptTop + qCeil(lines) + m::search::rowBottom);
     }
     const bool returning = canReturn && !hits.isEmpty();
@@ -263,7 +258,8 @@ void SearchPanel::redraw() {
     pager->setPage(resultPage, count,
                    strings::get("search_panel.result_range")
                        .arg(resultPage * pageSize + 1)
-                       .arg(qMin((resultPage + 1) * pageSize, int(hits.size()))));
+                       .arg(qMin((resultPage + 1) * pageSize, int(hits.size()))),
+                   true);
     original->setVisible(returning);
     original->setGeometry(0, c::headerHeight, width(), m::list::twoLines);
     const bool waiting = hits.isEmpty() && !scanning;
@@ -303,8 +299,10 @@ void SearchPanel::redraw() {
         label->setTextFormat(Qt::RichText);
         ui::readerStyle(
             button,
-            "QPushButton{border:none;border-radius:0;border-bottom:1px solid palette(light);background:palette(window);min-height:0;padding:0;}"
-            " QPushButton:pressed{background:palette(midlight);}");
+            QString(
+                "QPushButton{border:none;border-radius:0;border-bottom:%1px solid palette(light);background:palette(window);min-height:0;padding:0;}"
+                " QPushButton:pressed{background:palette(midlight);}")
+                .arg(m::control::border));
         connect(button, &QPushButton::clicked, this, [this, row] {
             const int index = resultPage * pageSize + row;
             if (index < hits.size() && selected) {
@@ -346,17 +344,12 @@ void SearchPanel::redraw() {
                                     (after.isEmpty() ? QString() : after.toHtmlEscaped() + QStringLiteral("…")));
         };
         // Trim context, never the match, using the same rich-text width as the label.
-        QTextDocument document;
-        document.setDocumentMargin(0);
-        document.setDefaultFont(font);
-        document.setTextWidth(labels[row]->width());
-        document.setHtml(excerpt());
-        while (document.size().height() > labels[row]->height() && (!before.isEmpty() || !after.isEmpty())) {
+        while (ui::excerptTextHeight(excerpt(), font, labels[row]->width()) > labels[row]->height() &&
+               (!before.isEmpty() || !after.isEmpty())) {
             if (before.size() >= after.size())
                 before.remove(0, before.at(0).isHighSurrogate() ? 2 : 1);
             else
                 after.chop(after.at(after.size() - 1).isLowSurrogate() ? 2 : 1);
-            document.setHtml(excerpt());
         }
         // Engine context can already end mid-word; keep whole words at the outer ends.
         if (!before.isEmpty()) {

@@ -112,6 +112,17 @@ protected:
         return false;
     }
 };
+class PaintCountingObserver : public QObject {
+public:
+    int paints = 0;
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (event->type() == QEvent::Paint)
+            ++paints;
+        return false;
+    }
+};
 class PaintCountingPanel : public kobalt::ui::Panel {
 public:
     QRegion painted;
@@ -124,8 +135,22 @@ protected:
 };
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
+    {
+        // The loading view is built before the whole bundle is verified. A
+        // font used before then must not stop the faces registering later.
+        const auto early = kobalt::ui::interfaceFont();
+        Q_UNUSED(early);
+        kobalt::AssetBundle opening(kobalt::test::readerAssets().root(), QStringLiteral(KOBALT_VERSION));
+        require(kobalt::ui::initializeOpeningFonts(opening), "Cannot load the opening view's fonts");
+        require(QFontInfo(kobalt::ui::interfaceFont()).family() == "Kobalt UI Sans" &&
+                    QFontInfo(kobalt::ui::brandFont(32)).family() == "Kobalt UI Serif",
+                "Opening view does not draw in the interface fonts");
+    }
     require(kobalt::test::readerAssets().available(), "Component assets failed manifest verification");
-    require(kobalt::ui::initializeInterfaceFonts(kobalt::test::readerAssets()), "Cannot load verified UI font bytes");
+    bool facesChanged = true;
+    require(kobalt::ui::initializeInterfaceFonts(kobalt::test::readerAssets(), &facesChanged),
+            "Cannot load verified UI font bytes");
+    require(!facesChanged, "Full font initialization replaced the opening faces and repaints the loading view");
     require(QFontInfo(kobalt::ui::interfaceFont()).family() == "Kobalt UI Sans" &&
                 QFontInfo(kobalt::ui::chromeFont()).family() == "Kobalt UI Mono" &&
                 QFontInfo(kobalt::ui::brandFont(32)).family() == "Kobalt UI Serif",
@@ -153,12 +178,12 @@ int main(int argc, char **argv) {
                 const auto image = notice.grab().toImage();
                 const int middleX = image.width() / 2, middleY = image.height() / 2;
                 const auto ink = notice.palette().color(QPalette::WindowText);
-                for (int offset = 0; offset < 2; ++offset)
+                for (int offset = 0; offset < int(kobalt::ui::metrics::chrome::heavyRule); ++offset)
                     require(image.pixel(offset, middleY) == ink.rgba() &&
                                 image.pixel(image.width() - 1 - offset, middleY) == ink.rgba() &&
                                 image.pixel(middleX, offset) == ink.rgba() &&
                                 image.pixel(middleX, image.height() - 1 - offset) == ink.rgba(),
-                            "Light indicator is missing a two-pixel border on an edge");
+                            "Light indicator is missing its heavy border on an edge");
             }
         notice.setLevel(false, -1);
         require(value->text() == "0%", "Light indicator does not clamp low values");
@@ -167,6 +192,21 @@ int main(int argc, char **argv) {
         notice.centerIn(QSize(1680, 1264));
         require(notice.geometry().center() == QRect(0, 0, 1680, 1264).center(),
                 "Light indicator is off center in landscape");
+    }
+    {
+        kobalt::ui::PagerBar pager(nullptr, "test");
+        for (int count : {0, 1}) {
+            pager.setPage(0, count, {}, true);
+            require(!pager.previous->isEnabled() && !pager.next->isEnabled(),
+                    "Empty or single-page list enabled a turn");
+            require(pager.turnTarget(-1) == 0 && pager.turnTarget(1) == 0, "Empty or single-page list changed page");
+        }
+        pager.setPage(0, 3, {}, true);
+        require(pager.previous->isEnabled() && pager.turnTarget(-1) == 2, "List previous did not wrap");
+        pager.setPage(2, 3, {}, true);
+        require(pager.next->isEnabled() && pager.turnTarget(1) == 0, "List next did not wrap");
+        pager.setPage(2, 3);
+        require(!pager.next->isEnabled() && pager.turnTarget(1) == 2, "Bounded content pager wrapped");
     }
     {
         using namespace kobalt::ui;
@@ -345,7 +385,7 @@ int main(int argc, char **argv) {
                 require(loading.card()->rect().contains(bar->geometry()), "Loading bar exceeds the modal card");
         }
         for (const auto &message :
-             {"Enabling bionic reading...", "Disabling bionic reading...", "Updating page layout..."}) {
+             {"Enabling Bold Reading...", "Disabling Bold Reading...", "Updating page layout..."}) {
             loading.setDelayedProgress(true, 1100, 0, message);
             require(loading.findChild<QLabel *>("rrUpdatingText")->text() == message &&
                         loading.card()->findChildren<QLabel *>().size() == 1 &&
@@ -934,7 +974,7 @@ int main(int argc, char **argv) {
         QApplication::processEvents();
         auto *contents = &choices;
         auto *previous = choices.findChild<QPushButton *>("rrContentsPrevious");
-        require(choices.currentPage() == 2 && !choices.findChild<QPushButton *>("rrContentsNext")->isEnabled(),
+        require(choices.currentPage() == 2 && choices.findChild<QPushButton *>("rrContentsNext")->isEnabled(),
                 "Contents did not open on the current chapter's page");
         auto *current = contents->findChild<QLabel *>("chapter34Title");
         require(current && !current->font().bold(), "Current chapter uses a bold label");
@@ -952,7 +992,7 @@ int main(int argc, char **argv) {
         previous->click();
         previous->click();
         QApplication::processEvents();
-        require(choices.currentPage() == 0 && !previous->isEnabled(), "Contents pager did not change the visible page");
+        require(choices.currentPage() == 0 && previous->isEnabled(), "Contents pager did not change the visible page");
         auto *parent = contents->findChild<QLabel *>("chapter0Title");
         auto *nested = contents->findChild<QLabel *>("chapter1Title");
         require(parent && nested &&
@@ -1008,8 +1048,13 @@ int main(int argc, char **argv) {
         require(close->geometry().topLeft() == QPoint() && close->width() == kobalt::ui::metrics::chrome::cellWidth,
                 "The Chapters bar lost its close cell");
         auto *next = choices.findChild<QPushButton *>("rrContentsNext");
-        while (next->isEnabled())
-            next->click();
+        previous->click();
+        require(choices.currentPage() == 2, "Previous did not wrap to the final contents page");
+        next->click();
+        require(choices.currentPage() == 0, "Next did not wrap to the first contents page");
+        previous->click();
+        require(currentButton->grab().toImage().pixel(4, 4) == selectedPaper,
+                "Wrapping changed the selected chapter highlight");
         choices.resize(1448, 1072);
         QApplication::processEvents();
         const auto count = choices.findChild<QLabel *>("rrContentsPage")->text().split(" of ");
@@ -1086,10 +1131,9 @@ int main(int argc, char **argv) {
         const int outlierLeft = evenLeft + 20 * (evenWidth + g::gapWide);
         require(qGray(capped.pixel(evenLeft, chartHeight - chartHeight / g::scaleCap + 2)) == 0,
                 "An outlier flattened the other chapters");
-        require(qGray(capped.pixel(outlierLeft, g::capNotchTop)) == 255 &&
-                    qGray(capped.pixel(outlierLeft, g::capNotchTop + g::capNotch + 1)) == 0 &&
-                    qGray(capped.pixel(outlierLeft, 0)) == 0,
-                "A capped chapter lacks its full height or its notch");
+        // A capped chapter reaches the top of the chart with an unbroken outline.
+        for (int y = 0; y < chartHeight; ++y)
+            require(qGray(capped.pixel(outlierLeft, y)) == 0, "A capped chapter lacks its full height or is marked");
         for (int i = 21; i < 80; ++i)
             even.append({QString::number(i), QString::number(i), i, 0, 1000});
         graph.setData(even, {}, true, {});
@@ -1138,6 +1182,21 @@ int main(int argc, char **argv) {
                 "A long chapter title did not elide on one line");
         graph.setProgress("The Second Voyage", 4, 10, 12, 25, 100);
         QApplication::processEvents();
+        PaintCountingObserver graphPaints, barPaints, titlePaints;
+        graph.installEventFilter(&graphPaints);
+        bars->installEventFilter(&barPaints);
+        title->installEventFilter(&titlePaints);
+        graph.setData(chapters, {20, -1, 1, 1}, true, {});
+        graph.setProgress("The Second Voyage", 4, 10, 12, 25, 100);
+        QApplication::processEvents();
+        require(graphPaints.paints == 0 && barPaints.paints == 0 && titlePaints.paints == 0,
+                "Repeated Stats data and progress repainted the graph");
+        auto changedChapters = chapters;
+        ++changedChapters[20].words;
+        graph.setData(changedChapters, {20, -1, 1, 1}, true, {});
+        QApplication::processEvents();
+        require(barPaints.paints > 0, "Changed chapter word count did not repaint the bars");
+        graph.setData(chapters, {20, -1, 1, 1}, true, {});
         require(title->text() == "The Second Voyage", "The chapter title is missing");
         require(text("rrGraphChapterPercent") == get("common.percent").arg(30) && text("rrGraphChapterFigure") == "7" &&
                     text("rrGraphChapterUnit") == get("stats.pages_left"),
@@ -1228,20 +1287,13 @@ int main(int argc, char **argv) {
         kobalt::ui::setDensity(300);
         graph.setProgress("Last chapter", 1, 1, 0, 0, 1);
         require(text("rrGraphNextChapter") == get("stats.last_chapter"), "Last chapter still names a next chapter");
-        QVector<kobalt::ChapterTarget> spine{{"One", "one", 0, 0}, {"Two", "two", 0, 0}};
-        QVector<kobalt::ChapterTarget> counted{
-            {"One", "one", 0, 100}, {"One TOC", "one", 0, 40}, {"Nested", "one#part", 1, 60}, {"Two", "two", 0, 200}};
-        require(kobalt::spineWordCount(spine, counted) == 300, "Book words double-counted overlapping TOC intervals");
-        // Without Nickel's counts, Stats charts chapters by their length in pages.
+        // Without shared counts, Stats charts chapters by their length in pages.
         const auto lengths = kobalt::chapterPageLengths(
             {{"One", "a", 0}, {"Two", "b", 4}, {"Part", "c", 4}, {"Lost", "d", -1}, {"End", "e", 9}}, 12);
         require(lengths.size() == 5 && lengths[0].words == 4 && lengths[1].words == 5 && lengths[2].words == 5 &&
                     lengths[3].words == 0 && lengths[4].words == 3,
                 "Page lengths did not follow the chapter starts");
         require(kobalt::chapterPageLengths({{"Lost", "a", -1}}, 12).isEmpty(), "Chapters without pages gave a chart");
-        spine[0].location = "one#part";
-        require(kobalt::spineWordCount(spine, counted) == -1,
-                "Fragment-only spine fallback supplied an unsafe word total");
         graph.setData({}, {}, true, {});
         require(message->isVisible() &&
                     message->text() == kobalt::strings::get("chapter_graph.no_chapter_lengths_available") &&
@@ -1257,14 +1309,24 @@ int main(int argc, char **argv) {
         ChoiceScreen picker(&host);
         QVector<Choice> choices;
         for (int i = 0; i < 25; ++i)
-            choices.append({QString("Font %1").arg(i), QString(), QString("font%1").arg(i)});
+            choices.append({QString("Font %1").arg(i), QString("Family %1").arg(i), QString("font%1").arg(i)});
+        QVector<QStringList> requestedPages;
+        picker.fontPageRequested = [&](const QStringList &families) {
+            requestedPages.append(families);
+        };
         picker.setDropdownGeometry(QRect(0, 200, 1072, picker.fontPanelHeight()));
         picker.showChoices("Font", choices, {}, ChoiceScreen::Mode::Fonts);
+        require(requestedPages.size() == 1, "Opening the font picker did not request its visible page once");
         auto *next = picker.findChild<QPushButton *>("rrFontPagerNext");
         auto *previous = picker.findChild<QPushButton *>("rrFontPagerPrevious");
         require(next && previous, "Font picker lacks paging controls");
         for (int page = 0; page < 3; ++page) {
             app.processEvents();
+            QStringList expectedFamilies;
+            for (int i = page * 12; i < qMin((page + 1) * 12, int(choices.size())); ++i)
+                expectedFamilies.append(choices[i].value);
+            require(requestedPages.size() == page + 1 && requestedPages.last() == expectedFamilies,
+                    "Font picker requested families outside the visible page");
             int visible = 0;
             QVector<QRect> rectangles;
             for (int i = 0; i < choices.size(); ++i) {
@@ -1279,12 +1341,20 @@ int main(int argc, char **argv) {
                 ++visible;
             }
             require(visible == (page < 2 ? 12 : 1), "Grid page capacity is wrong");
-            require(next->isEnabled() == (page < 2), "Grid last-page boundary is wrong");
-            if (next->isEnabled())
+            require(next->isEnabled(), "Grid last-page boundary is wrong");
+            if (page < 2)
                 next->click();
         }
-        while (previous->isEnabled())
+        for (int turn = 0; turn < 2; ++turn)
             previous->click();
+        require(requestedPages.size() == 5 && requestedPages[3] == requestedPages[1] &&
+                    requestedPages[4] == requestedPages[0],
+                "Returning to a font page requested different families");
+        previous->click();
+        require(requestedPages.last() == QStringList{choices.last().value},
+                "Font previous did not request the last page");
+        next->click();
+        require(requestedPages.last() == requestedPages.first(), "Font next did not request the first page");
         for (const QSize size : {QSize(1072, picker.fontPanelHeight()), QSize(600, 450)}) {
             picker.setFontGeometry(QRect(QPoint(), size));
             app.processEvents();
@@ -1294,6 +1364,8 @@ int main(int argc, char **argv) {
                         "Grid clips a cell after resize");
             }
         }
+        require(requestedPages.size() == 7, "Resizing the font picker requested a hidden font page");
+        picker.fontPageRequested = {};
         require(picker.findChild<QPushButton *>("font0")->width() == picker.width() / 3 &&
                     picker.findChild<QPushButton *>("font1")->width() == picker.width() / 3,
                 "Default slots must each occupy a third of a row");
@@ -1352,7 +1424,7 @@ int main(int argc, char **argv) {
             cell->click();
             require(chosen == sections[i].value, "Section page chose a font from another page");
         }
-        require(!next->isEnabled(), "Supplemental page passed the last section");
+        require(next->isEnabled(), "Supplemental page cannot wrap to the first section");
         const auto sparse = picker.grab().toImage();
         const auto paper = picker.palette().color(QPalette::Window);
         const auto ink = picker.palette().color(QPalette::WindowText);
@@ -1546,11 +1618,19 @@ int main(int argc, char **argv) {
                 "Turning the option off kept heavier text");
         require(interfaceWeightSteps(kobalt::qt::object({{"heavier_interface_text", true}})) == heavierTextSteps,
                 "The option does not select heavier text");
+        kobalt::ChapterGraph graph(&host);
+        graph.resize(900, kobalt::ui::metrics::chapters::graphHeight);
+        graph.setProgress("A chapter with a title that needs layout", 4, 10, 12, 25, 100);
+        auto *graphTitle = graph.findChild<QLabel *>("rrGraphChapterTitle");
         for (int round = 0; round < 2; ++round) {
             require(setInterfaceWeight(heavierTextSteps), "Heavier text did not replace the faces");
             require(!setInterfaceWeight(heavierTextSteps), "The same weight replaced the faces again");
             refreshInterfaceText(&host);
             app.processEvents();
+            graphTitle->setGeometry(0, 0, 1, 1);
+            graph.setProgress("A chapter with a title that needs layout", 4, 10, 12, 25, 100);
+            require(graphTitle->width() == graph.width() - 2 * int(metrics::chrome::inset),
+                    "Heavier interface text did not lay out unchanged Stats progress");
             require(interfaceWeight() == heavierTextSteps && QFontInfo(interfaceFont()).family() == nativeFamily &&
                         QFontInfo(chromeFont()).family() == chromeFamily,
                     "Heavier text changed the family");
@@ -1580,6 +1660,10 @@ int main(int argc, char **argv) {
             require(setInterfaceWeight(0), "Regular text did not replace the faces");
             refreshInterfaceText(&host);
             app.processEvents();
+            graphTitle->setGeometry(0, 0, 1, 1);
+            graph.setProgress("A chapter with a title that needs layout", 4, 10, 12, 25, 100);
+            require(graphTitle->width() == graph.width() - 2 * int(metrics::chrome::inset),
+                    "Regular interface text did not lay out unchanged Stats progress");
             require(plain->grab().toImage() == regularPixels && measure() == regular,
                     "Regular text did not return to its pixels");
         }
@@ -2232,11 +2316,18 @@ int main(int argc, char **argv) {
                     seen.insert(id);
                 }
             auto *next = page.findChild<QPushButton *>("rrDictionariesNext");
-            if (!next->isEnabled())
+            const auto fraction = page.findChild<QLabel *>("rrDictionariesPage")->text().split(" of ");
+            if (fraction.first() == fraction.last())
                 break;
             next->click();
         } while (pageCount < 20);
         require(seen.size() == entries.size() && pageCount > 1, "Dictionary paging lost entries");
+        auto *catalogCounter = page.findChild<QLabel *>("rrDictionariesPage");
+        const auto finalCatalogPage = catalogCounter->text();
+        page.findChild<QPushButton *>("rrDictionariesNext")->click();
+        require(catalogCounter->text().startsWith("1 of "), "Dictionary list did not wrap forwards");
+        page.findChild<QPushButton *>("rrDictionariesPrevious")->click();
+        require(catalogCounter->text() == finalCatalogPage, "Dictionary list did not wrap backwards");
         page.setLanguage("zz");
         page.setState({}, false, {});
         app.processEvents();
@@ -2246,7 +2337,8 @@ int main(int argc, char **argv) {
                         "Unknown language retains book-specific captions");
         auto resetPage = [&] {
             auto *previous = page.findChild<QPushButton *>("rrDictionariesPrevious");
-            while (previous->isEnabled())
+            for (int turn = 0; turn < 20 && !page.findChild<QLabel *>("rrDictionariesPage")->text().startsWith("1 of ");
+                 ++turn)
                 previous->click();
             app.processEvents();
         };
@@ -2270,7 +2362,8 @@ int main(int argc, char **argv) {
             for (int i = 0; auto *row = page.findChild<QWidget *>(QString("rrDictionaryRow%1").arg(i)); ++i)
                 ordered.append(row->property("dictionary_id").toString());
             auto *next = page.findChild<QPushButton *>("rrDictionariesNext");
-            if (!next->isEnabled())
+            const auto fraction = page.findChild<QLabel *>("rrDictionariesPage")->text().split(" of ");
+            if (fraction.first() == fraction.last())
                 break;
             next->click();
         } while (ordered.size() < 10);
@@ -2315,8 +2408,7 @@ int main(int argc, char **argv) {
             dynamic_cast<kobalt::ui::ListHeader *>(page.findChild<QWidget *>("rrDictionarySection0"));
         require(installedHeader && installedHeader->leftLabel()->text().startsWith("Installed for this book"),
                 "Completed install did not move into the installed section");
-        while (page.findChild<QPushButton *>("rrDictionariesNext")->isEnabled())
-            page.findChild<QPushButton *>("rrDictionariesNext")->click();
+        page.findChild<QPushButton *>("rrDictionariesPrevious")->click();
         page.setCatalog({english[1]});
         page.setState({"en-en"}, false, {});
         app.processEvents();
@@ -2951,6 +3043,25 @@ int main(int argc, char **argv) {
         require(slider.value() == (index == spacingStops.size() - 1 ? 299 : spacingStops[index]),
                 "Minus snapped instead of changing line height by one percent");
     }
+    slider.setRange(14, 96);
+    slider.setSingleStep(2);
+    const QVector<int> sizeStops{14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48, 56, 64, 80, 96};
+    slider.setMarkers(sizeStops, kobalt::ui::SettingSlider::MarkerMode::Stops);
+    slider.resize(560 + 2 * inset, 72);
+    for (int index = 0; index < sizeStops.size(); ++index) {
+        const int x = inset + 40 * index;
+        slide(QEvent::MouseButtonPress, x);
+        slide(QEvent::MouseButtonRelease, x);
+        require(slider.value() == sizeStops[index], "Font size did not snap to its nonlinear stop");
+    }
+    slider.nudge(-1);
+    require(slider.value() == 94, "Minus did not change 48 pt to 47 pt");
+    slider.nudge(-1);
+    require(slider.value() == 92, "Minus snapped instead of changing to 46 pt");
+    slider.setRange(100, 300);
+    slider.setSingleStep(1);
+    slider.setMarkers(spacingStops, kobalt::ui::SettingSlider::MarkerMode::Stops);
+    slider.resize(360 + 2 * inset, 72);
     for (const bool dark : {false, true}) {
         QPalette colors = originalPalette;
         colors.setColor(QPalette::Window, dark ? Qt::black : Qt::white);

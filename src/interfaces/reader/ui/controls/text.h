@@ -8,6 +8,8 @@
 class QPainter;
 
 namespace kobalt::ui {
+// Uses the same font backend and wrapping as WholeLineLabel.
+qreal excerptTextHeight(const QString &html, const QFont &font, int width);
 // Search excerpts end between complete lines, even when their context wraps.
 class WholeLineLabel : public QLabel {
 public:

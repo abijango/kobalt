@@ -11,6 +11,28 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     auto cancelled = std::make_shared<std::atomic_bool>(false);
     {
+        ResourceCache bounded(
+            {"text"},
+            [](const QString &, const ResourceCache::Sink &sink, QString *) {
+                return sink("readable", 8);
+            },
+            cancelled);
+        require(bounded.readBounded("text", 4).isNull() && bounded.failure() == ResourceCache::Failure::Limit,
+                "Inspection did not enforce its smaller budget");
+        require(bounded.resumeAfterInspection() && bounded.readBounded("text", 8) == "readable",
+                "Inspection budget prevented a normal engine read");
+        ResourceCache failed(
+            {"text"},
+            [](const QString &, const ResourceCache::Sink &, QString *error) {
+                *error = "Synthetic transfer failure";
+                return false;
+            },
+            cancelled);
+        require(failed.readBounded("text", 8).isNull() && !failed.resumeAfterInspection() &&
+                    failed.failure() == ResourceCache::Failure::Transfer,
+                "Advisory inspection cleared a transfer failure");
+    }
+    {
         int failedLoads = 0, goodLoads = 0;
         ResourceCache images(
             {"bad", "good"},
@@ -132,6 +154,7 @@ int main(int argc, char **argv) {
     require(cache.size("a") == -1 &&
                 cache.error() == kobalt::strings::get("error.a_book_resource_changed_during_reading"),
             "Changed resource was mixed with existing document");
+    require(!cache.resumeAfterInspection(), "Advisory inspection cleared changed resource bytes");
     ResourceCache oversized(
         {"large"},
         [](const QString &, const ResourceCache::Sink &sink, QString *) {

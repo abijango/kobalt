@@ -41,7 +41,27 @@ Geometry geometry(ControlIcon icon, bool sideButtons) {
         path.moveTo(x1, y1);
         path.lineTo(x2, y2);
     };
-    if (icon == ControlIcon::Bluetooth) {
+    if (icon == ControlIcon::Swipe) {
+        result.canvas = 24;
+        result.stroke = 1.5;
+        line(4, 2, 4, 12);
+        path.moveTo(2, 4);
+        path.lineTo(4, 2);
+        path.lineTo(6, 4);
+        path.moveTo(2, 10);
+        path.lineTo(4, 12);
+        path.lineTo(6, 10);
+        path.moveTo(10, 21);
+        path.lineTo(7, 16);
+        path.cubicTo(6, 14, 8, 13, 10, 15);
+        path.lineTo(10, 7);
+        path.cubicTo(10, 5, 13, 5, 13, 7);
+        path.lineTo(13, 12);
+        path.lineTo(18, 13);
+        path.cubicTo(21, 13, 22, 15, 21, 18);
+        path.lineTo(20, 21);
+        path.closeSubpath();
+    } else if (icon == ControlIcon::Bluetooth) {
         result.canvas = 24;
         lucideGeometry(QStringLiteral("bluetooth"), path, result.stroke);
     } else if (icon == ControlIcon::Download) {
@@ -138,6 +158,9 @@ Geometry geometry(ControlIcon icon, bool sideButtons) {
         result.filled = true;
         for (int x : {14, 32, 50})
             path.addEllipse(QPointF(x, 32), 3.5, 3.5);
+    } else if (icon == ControlIcon::RotationBoth) {
+        path.addRoundedRect(QRectF(6, 10, 20, 36), 2, 2);
+        path.addRoundedRect(QRectF(32, 24, 28, 22), 2, 2);
     } else if (icon >= ControlIcon::Portrait && icon <= ControlIcon::InvertedLandscape) {
         result.canvas = 24;
         result.filled = true;

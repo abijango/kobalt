@@ -387,6 +387,8 @@ bool ReaderModel::openSource(std::shared_ptr<ReaderSource> source, QSize size, c
                                                 strings::key("error.the_reading_engine_could_not_open_this_epub"))
                                          : fail(OpeningFailureKind::Io, "opening.resource-read", resourceFailure);
     }
+    source_->embeddedFonts = source_->parent ? source_->parent->embeddedFonts : embeddedFontCount();
+    applyPublisherFontFallbacks();
     engine_->getDocument()->getProps()->setInt("kobalt.bionic.mode", bionic_ == "bold" ? 1 : 0);
     openingTimes_["model_parse_ms"] = double(phase.restart());
     // The package language selects hyphenation patterns and line-breaking

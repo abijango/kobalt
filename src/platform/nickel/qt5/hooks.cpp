@@ -15,6 +15,7 @@
 namespace kobalt::nickel4 {
 void (*nativeShowReader)(void *, const void *, const void *, void *, const void *);
 void (*nativeFinishInitialization)(void *);
+bool (*nativeHomeKeyFilter)(void *, QObject *, QKeyEvent *);
 void (*nativeContinueUsing)(void *), (*nativeUnplugged)(void *);
 // Adapters check their exported functions separately. The shared build only
 // needs the unexported orientation singleton, matched by its code signature.
@@ -25,6 +26,12 @@ bool firmwareSupported() {
 
 using namespace kobalt::nickel4;
 static nh_hook readerHooks[] = {
+    {.sym = "_ZN17HomePageKeyFilter6filterEP7QObjectP9QKeyEvent",
+     .sym_new = "kobalt_home_key_filter",
+     .lib = "libnickel.so.1.0.0",
+     .out = nh_symoutptr(nativeHomeKeyFilter),
+     .desc = "Save and close Kobalt before Home navigation",
+     .optional = true},
     {.sym = "_ZNK21QEvdevTouchScreenData13mapFromDeviceERK6QPoint",
      .sym_new = "kobalt_touch_map_from_device",
      .lib = "/usr/local/Kobo/generic/libkevdevtouch.so",
@@ -97,6 +104,12 @@ static nh_hook readerHooks[] = {
      .lib = "libnickel.so.1.0.0",
      .out = nh_symoutptr(kobalt::nativeCanSuspend),
      .desc = "Wait for Kobalt work to park before suspension",
+     .optional = false},
+    {.sym = "_ZN19PlugWorkflowManager18onCancelAndConnectEv",
+     .sym_new = "kobalt_usb_workflow",
+     .lib = "libnickel.so.1.0.0",
+     .out = nh_symoutptr(kobalt::nativeUsbWorkflow),
+     .desc = "Save Kobalt progress before the USB workflow starts",
      .optional = false},
     {.sym = "_ZN19PlugWorkflowManager14aboutToConnectEv",
      .sym_new = "kobalt_usb_about_to_connect",

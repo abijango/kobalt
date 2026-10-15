@@ -18,7 +18,6 @@
 #include <memory>
 #include <QMenu>
 #include <QPointer>
-#include <QRegularExpression>
 #include <QVariantMap>
 #include <dlfcn.h>
 
@@ -88,7 +87,7 @@ void rememberNativeBook(const QString &identity, const QString &path, bool prote
     nativeBooks.insert(identity, {path, file.size(), file.lastModified(),
                                   protectedBook ? ReaderBookRoute::Protected : ReaderBookRoute::Remembered});
 }
-ReaderBookRoute readerBookRoute(const void *volume, QString *identity, QString *path) {
+static ReaderBookRoute bookRoute(const void *volume, QString *identity, QString *path, bool inspectPublication) {
     using Route = ReaderBookRoute;
     if (previewBook(volume))
         return Route::Unsupported;
@@ -114,12 +113,10 @@ ReaderBookRoute readerBookRoute(const void *volume, QString *identity, QString *
         return Route::Protected;
 #endif
     auto filename = localReaderBookPath(id);
-    const bool purchased =
-        QRegularExpression("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-            .match(id)
-            .hasMatch();
-    if (purchased)
-        filename = "/mnt/onboard/.kobo/kepub/" + id;
+    const bool downloaded = filename.isEmpty();
+    if (downloaded) {
+        filename = downloadedReaderBookPath(id);
+    }
     if (filename.isEmpty() || !QFileInfo(filename).isFile()) {
         return Route::Unsupported;
     }
@@ -132,7 +129,10 @@ ReaderBookRoute readerBookRoute(const void *volume, QString *identity, QString *
             return cached->route;
         nativeBooks.remove(id);
     }
-    if (purchased) {
+    if (!inspectPublication) {
+        return Route::Direct;
+    }
+    if (downloaded) {
         // Read only whether Nickel has protection metadata for this volume.
         // Never select key values or infer protection from purchase status or
         // a parser failure. Missing metadata is not proof of readable content;
@@ -175,6 +175,12 @@ ReaderBookRoute readerBookRoute(const void *volume, QString *identity, QString *
         return Route::Failed;
     }
     return Route::Direct;
+}
+ReaderBookRoute readerBookRoute(const void *volume, QString *identity, QString *path) {
+    return bookRoute(volume, identity, path, true);
+}
+ReaderBookRoute readerBookCandidateRoute(const void *volume, QString *identity, QString *path) {
+    return bookRoute(volume, identity, path, false);
 }
 bool eligibleReaderBook(const void *volume, QString *identity, QString *path) {
     return readerBookRoute(volume, identity, path) == ReaderBookRoute::Direct;

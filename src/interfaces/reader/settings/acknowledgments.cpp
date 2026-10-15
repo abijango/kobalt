@@ -174,18 +174,10 @@ Acknowledgments::Acknowledgments(QWidget *parent) : QFrame(parent) {
             finished();
     });
     connect(pager->previous, &QPushButton::clicked, this, [this] {
-        if (entry >= 0)
-            --text->page;
-        else
-            --listPage;
-        redraw();
+        turnPage(-1);
     });
     connect(pager->next, &QPushButton::clicked, this, [this] {
-        if (entry >= 0)
-            ++text->page;
-        else
-            ++listPage;
-        redraw();
+        turnPage(1);
     });
 }
 void Acknowledgments::open() {
@@ -230,7 +222,17 @@ void Acknowledgments::paintEvent(QPaintEvent *event) {
     ui::paintHeaderRules(painter, this);
     painter.fillRect(0, divider, width(), m::control::border, ui::dividerColor(this));
 }
-void Acknowledgments::redraw() {
+void Acknowledgments::turnPage(int direction) {
+    if (entry >= 0) {
+        text->page = qBound(0, text->page + direction, text->pages() - 1);
+        text->update();
+        pager->setPage(text->page, text->pages());
+    } else {
+        listPage = pager->turnTarget(direction);
+        redraw(true);
+    }
+}
+void Acknowledgments::redraw(bool paging) {
     const bool reading = entry >= 0;
     const int textWidth = qMax(1, width() - 2 * c::inset), captionHeight = c::statusHeight - m::control::border;
     back->setGeometry(0, c::statusHeight, c::cellWidth, c::actionHeight - c::heavyRule);
@@ -363,8 +365,10 @@ void Acknowledgments::redraw() {
         rows.at(row)->hide();
     for (; heading < headings.size(); ++heading)
         headings.at(heading)->hide();
-    pager->setPage(page, count);
-    text->update();
-    update();
+    pager->setPage(page, count, {}, !reading);
+    if (reading)
+        text->update();
+    if (!paging)
+        update();
 }
 }

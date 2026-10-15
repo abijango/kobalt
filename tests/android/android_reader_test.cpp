@@ -6,6 +6,9 @@
 #include "interfaces/reader/views/reading_page.h"
 #include "reading/reading_density.h"
 #include "storage/reader_storage.h"
+#include "support/strings.h"
+
+#include <QLabel>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -77,6 +80,32 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(opened.count(), 2, 15000);
         reader->window()->checkpoint();
         QCOMPARE(storage::readJson(paths.bookState(identity)).value("position"), saved.value("position"));
+    }
+    void statsUsesSharedCountAfterReopening() {
+        QSignalSpy opened(reader.get(), &android::ReaderController::opened);
+        for (int opening = 1; opening <= 2; ++opening) {
+            reader->open(fixture("word-counts.epub"), {1264, 1680});
+            QTRY_COMPARE_WITH_TIMEOUT(opened.count(), opening, 15000);
+            auto *window = reader->window();
+            QVERIFY(window);
+            window->show();
+            QVERIFY(QTest::qWaitForWindowExposed(window));
+            QTRY_VERIFY(window->readyForPresentation());
+            auto *page = window->findChild<ReadingPage *>("rrPage");
+            QVERIFY(page);
+            page->tapped(page->rect().center());
+            auto *stats = window->findChild<QPushButton *>("rrNavStats");
+            QVERIFY(stats);
+            QTRY_VERIFY(stats->isVisible());
+            QTest::mouseClick(stats, Qt::LeftButton);
+            auto *detail = window->findChild<QLabel *>("rrGraphBookDetail");
+            QVERIFY(detail);
+            QTRY_VERIFY(detail->isVisible());
+            QCOMPARE(detail->text(), strings::get("stats.words").arg("40"));
+            QVERIFY(window->findChild<QWidget *>("rrChapterBars")->isVisible());
+            reader->close();
+            QTRY_VERIFY_WITH_TIMEOUT(reader->idle(), 15000);
+        }
     }
     void logicalPageButtonsKeepRtlOrderAndInputGuards() {
         QSignalSpy opened(reader.get(), &android::ReaderController::opened);

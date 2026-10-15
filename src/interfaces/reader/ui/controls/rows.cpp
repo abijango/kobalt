@@ -290,7 +290,7 @@ QHBoxLayout *horizontalRow() {
 QHBoxLayout *labeledRow(QWidget *parent, QVBoxLayout *rows, const QString &label) {
     auto *line = horizontalRow();
     rows->addLayout(line);
-    auto *caption = new QLabel(label + ":", parent);
+    auto *caption = new QLabel(label, parent);
     caption->setFixedWidth(m::control::captionWidth);
     caption->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     readerStyle(caption, styles::font(m::text::secondary));
@@ -312,6 +312,7 @@ QPushButton *SegmentedRow::add(const QString &name, const QString &text) {
     button->setObjectName(name);
     button->setCheckable(true);
     button->setFocusPolicy(Qt::NoFocus);
+    button->setProperty("segment_first", group->buttons().isEmpty());
     // QSS heights exclude padding. Every segment has the same 72px hit area.
     readerStyle(button, styles::segment());
     group->addButton(button);

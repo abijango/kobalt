@@ -7,6 +7,7 @@
 #include <QMetaType>
 #include <QEvent>
 #include <QTimer>
+#include <QVariant>
 #include <dlfcn.h>
 
 namespace kobalt {
@@ -94,8 +95,11 @@ bool NativeKeyboard::show() {
         return false;
     }
     place();
-    frame->show();
-    frame->raise();
+    if (!frame->isVisible()) {
+        frame->show();
+        frame->raise();
+    }
+    host->window()->setProperty("reader_keyboard_bounds", QRect(frame->mapTo(host->window(), QPoint()), frame->size()));
     editor->setFocus();
     return true;
 }
@@ -105,8 +109,12 @@ void NativeKeyboard::place() {
     frame->resize(host->width(), qMax(1, frame->sizeHint().height()));
     const int height = qMax(1, frame->sizeHint().height());
     frame->setGeometry(0, host->height() - height, host->width(), height);
+    host->window()->setProperty("reader_keyboard_bounds",
+                                frame->isVisible() ? QRect(frame->mapTo(host->window(), QPoint()), frame->size())
+                                                   : QRect());
 }
 void NativeKeyboard::hide() {
+    host->window()->setProperty("reader_keyboard_bounds", QRect());
     if (frame)
         frame->hide();
 }

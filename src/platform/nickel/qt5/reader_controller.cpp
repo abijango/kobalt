@@ -37,6 +37,14 @@ ReaderEnvironment &environment() {
     static ReaderEnvironment value;
     return value;
 }
+extern "C" __attribute__((visibility("default"))) bool kobalt_home_key_filter(void *filter, QObject *watched,
+                                                                              QKeyEvent *event) {
+    if (kobalt::nickel::interceptHomeKey(event)) {
+        return true;
+    }
+    return nativeHomeKeyFilter(filter, watched, event);
+}
+
 std::function<bool(const void *, const kobalt::nickel4::OpeningContext &)> beginOpening;
 bool alternativeEnabled();
 bool nativeInitialized = false;
@@ -263,6 +271,17 @@ public:
         }
         CoordinatorBindings bindings{enabled};
         bindings.installInput = kobalt::nickel4::installTouchInput;
+        if (nativeHomeKeyFilter && dlsym(RTLD_DEFAULT, "_ZN20MainWindowController14sharedInstanceEv") &&
+            dlsym(RTLD_DEFAULT, "_ZN20MainWindowController5clearEP18AbstractControllerb")) {
+            bindings.goHome = [] {
+                const auto instance =
+                    reinterpret_cast<void *(*)()>(dlsym(RTLD_DEFAULT, "_ZN20MainWindowController14sharedInstanceEv"));
+                const auto clear = reinterpret_cast<void (*)(void *, void *, bool)>(
+                    dlsym(RTLD_DEFAULT, "_ZN20MainWindowController5clearEP18AbstractControllerb"));
+                // This is the navigation used by Nickel's HomePageKeyFilter.
+                clear(instance(), nullptr, false);
+            };
+        }
         bindings.publicationKeys = [](const kobalt::NativeOpening &opening) {
             return opening.keys();
         };

@@ -1,5 +1,6 @@
 #include "interfaces/reader/ui/controls/sliders.h"
 #include "interfaces/reader/ui/controls/panels.h"
+#include "interfaces/reader/ui/controls/options.h"
 #include "support/strings.h"
 #include "light_panel.h"
 #include "platform/api/light_controls.h"
@@ -7,41 +8,96 @@
 #include "interfaces/reader/ui/style/styles.h"
 #include "platform/api/kobo_refresh.h"
 #include <QHideEvent>
+#include <QHBoxLayout>
+#include <QPainter>
+#include "interfaces/reader/ui/controls/icons.h"
 #include <utility>
 
 namespace kobalt {
 namespace m = ui::metrics;
+namespace {
+class SwipeBand : public QWidget {
+public:
+    explicit SwipeBand(QWidget *parent) : QWidget(parent) {}
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(ui::darkTheme(this) ? m::light::hintPaperDark : m::light::hintPaperLight));
+    }
+};
+class SwipeIcon : public QWidget {
+public:
+    explicit SwipeIcon(QWidget *parent) : QWidget(parent) {
+        setFixedSize(m::text::heading, m::text::heading);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        ui::paintOpeningIcon(painter, ui::ControlIcon::Swipe, rect(), palette().color(QPalette::WindowText));
+    }
+};
+}
 LightPanel::LightPanel(LightControls &light, QWidget *parent) : ui::Panel(parent, Qt::BottomEdge), light(light) {
     setObjectName("rrLightPanel");
-    auto *rows = new QVBoxLayout(this);
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, m::control::border, 0, 0);
+    outer->setSpacing(0);
+    auto *controls = new QWidget(this);
+    auto *rows = new QVBoxLayout(controls);
+    outer->addWidget(controls);
     rows->setContentsMargins(m::panel::contentMargins);
     rows->setSpacing(m::control::rowGap);
+    automaticBrightness = new ui::DescribedOption(strings::get("light_panel.automatic_brightness"),
+                                                  strings::get("light_panel.automatic_brightness_description"), this);
+    automaticBrightness->setObjectName("rrAutomaticBrightness");
+    auto automaticPresentation = automaticBrightness->presentation();
+    automaticPresentation.indicator = ui::DescribedOption::Indicator::Square;
+    automaticPresentation.labelPixels = m::chrome::labelText;
+    automaticPresentation.descriptionPixels = m::chrome::descriptionText;
+    automaticPresentation.indicatorSize = {m::chrome::checkSize, m::chrome::checkSize};
+    automaticBrightness->setPresentation(automaticPresentation);
+    connect(automaticBrightness, &QCheckBox::clicked, this, [this](bool enabled) {
+        this->light.setAutomaticBrightness(enabled);
+        refreshValues();
+    });
     brightnessSlider =
         ui::sliderRow(this, rows, "rrBrightness", "rrBrightnessValue", strings::get("light_panel.brightness"),
                       "rrBrightnessLess", "rrBrightnessMore", 0, 100, 1, {}, {}, "%");
+    brightnessSlider->setMarkers({0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100});
     warmthSlider = ui::sliderRow(this, rows, "rrWarmth", "rrWarmthValue", strings::get("light_panel.warmth"),
-                                 "rrWarmthLess", "rrWarmthMore", 0, 100, 1, {});
+                                 "rrWarmthLess", "rrWarmthMore", 0, 100, 10, {}, {}, "%");
+    warmthSlider->setMarkers({0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}, ui::SettingSlider::MarkerMode::Stops);
     brightnessValue = findChild<QLabel *>("rrBrightnessValue");
     warmthValue = findChild<QLabel *>("rrWarmthValue");
     warmthRow = warmthSlider->parentWidget();
+    rows->addWidget(automaticBrightness);
     swipeTip = new QLabel(this);
     swipeTip->setObjectName("rrLightSwipeTip");
     swipeTip->setWordWrap(true);
-    ui::readerStyle(swipeTip, ui::styles::font(m::control::captionValueText) + "color:palette(placeholder-text);");
-    rows->addWidget(swipeTip);
-    error = new QLabel(strings::get("light_panel.could_not_save_light_settings"), this);
-    error->setObjectName("rrLightError");
-    error->setWordWrap(true);
-    rows->addWidget(error);
-    error->hide();
+    ui::readerStyle(swipeTip, ui::styles::font(m::text::secondary) +
+                                  "font-style:italic;background:transparent;color:palette(placeholder-text);");
+    swipeRow = new SwipeBand(this);
+    swipeRow->setObjectName("rrLightSwipeBand");
+    ui::readerStyle(swipeRow, "QWidget{background:transparent;}");
+    auto *tipLayout = new QHBoxLayout(swipeRow);
+    tipLayout->setContentsMargins(m::panel::contentMargins.left(), m::panel::contentMargins.top() + ui::px(4),
+                                  m::panel::contentMargins.right(), m::panel::contentMargins.bottom());
+    tipLayout->setSpacing(m::spacing::row);
+    tipLayout->addWidget(new SwipeIcon(swipeRow), 0, Qt::AlignTop);
+    tipLayout->addWidget(swipeTip, 1);
+    outer->insertWidget(0, swipeRow);
     // Automatic warmth and its bedtime stay in Nickel's settings. Moving the
     // warmth slider turns automatic warmth off, as Nickel's slider does.
     // Brightness changes reach the device while dragging. Native persistence
     // runs on release; interrupted drags restore the original level.
     connect(brightnessSlider, &QSlider::valueChanged, this, [this](int value) {
         brightnessValue->setText(QString::number(value) + '%');
-        if (!updating && this->light.beginGesture())
+        if (!updating && this->light.beginGesture()) {
             this->light.setGestureLevel(value);
+            automaticBrightness->setChecked(this->light.automaticBrightness());
+        }
     });
     brightnessSlider->committed = [this](int) {
         this->light.finishGesture(true);
@@ -53,11 +109,9 @@ LightPanel::LightPanel(LightControls &light, QWidget *parent) : ui::Panel(parent
                 warmthOriginal = this->light.warmth();
                 warmthAutomatic = this->light.automaticWarmth();
             }
-            result(this->light.setWarmth(value) == value);
+            const int minimum = this->light.warmthMinimum(), range = this->light.warmthMaximum() - minimum;
+            this->light.setWarmth(minimum + qRound(range * value / 100.0));
         }
-        const int range = warmthSlider->maximum() - warmthSlider->minimum();
-        warmthValue->setText(
-            QString::number(range > 0 ? qRound(100.0 * (value - warmthSlider->minimum()) / range) : 0) + '%');
     });
     warmthSlider->committed = [this](int) {
         finishWarmth(true);
@@ -80,7 +134,6 @@ LightPanel::~LightPanel() {
 bool LightPanel::open() {
     if (!light.initialize())
         return false;
-    error->hide();
     refreshValues();
     layoutPanel();
     show();
@@ -90,21 +143,32 @@ bool LightPanel::open() {
         changed();
     return true;
 }
+void LightPanel::setEdgeGesturesEnabled(bool enabled) {
+    if (edgeGesturesEnabled == enabled) {
+        return;
+    }
+    edgeGesturesEnabled = enabled;
+    swipeRow->setVisible(enabled);
+    layoutPanel();
+}
 void LightPanel::layoutPanel() {
     layout()->activate();
-    setGeometry(placement ? placement(sizeHint().height())
-                          : QRect(0, m::panel::toolbarHeight, parentWidget()->width(), sizeHint().height()));
-}
-void LightPanel::result(bool success) {
-    error->setVisible(!success);
-    layoutPanel();
+    const int width = parentWidget()->width();
+    const int height = layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(width) : sizeHint().height();
+    const QRect bounds = placement ? placement(height) : QRect(0, m::panel::toolbarHeight, width, height);
+    const bool moved = geometry() != bounds;
+    setGeometry(bounds);
+    if (moved && isVisible() && changed)
+        changed();
 }
 void LightPanel::refreshValues() {
     updating = true;
+    automaticBrightness->setVisible(light.hasAutomaticBrightness());
     if (!brightnessSlider->interacting() && light.gesturing())
         light.finishGesture(false);
     if (!warmthSlider->interacting())
         finishWarmth(false);
+    automaticBrightness->setChecked(light.automaticBrightness());
     if (!brightnessSlider->interacting())
         brightnessSlider->setValue(light.brightness());
     brightnessValue->setText(QString::number(brightnessSlider->value()) + '%');
@@ -114,14 +178,12 @@ void LightPanel::refreshValues() {
         strings::get(warmth ? "settings.edge_light_description" : "settings.edge_brightness_description"));
     if (warmth) {
         if (!warmthSlider->interacting()) {
-            warmthSlider->setRange(light.warmthMinimum(), light.warmthMaximum());
-            warmthSlider->setSingleStep(light.warmthStep());
-            warmthSlider->setValue(light.warmth());
+            const int minimum = light.warmthMinimum(), range = light.warmthMaximum() - minimum;
+            const int percent = range > 0 ? qRound(10.0 * (light.warmth() - minimum) / range) * 10 : 0;
+            warmthSlider->setValue(qBound(0, percent, 100));
         }
         // setValue does not emit when the current value is unchanged.
-        const int range = light.warmthMaximum() - light.warmthMinimum();
-        warmthValue->setText(QString::number(qRound(100.0 * (warmthSlider->value() - light.warmthMinimum()) / range)) +
-                             '%');
+        warmthValue->setText(QString::number(warmthSlider->value()) + '%');
     }
     updating = false;
     layoutPanel();
@@ -131,7 +193,7 @@ void LightPanel::finishWarmth(bool save) {
         return;
     const int original = std::exchange(warmthOriginal, -1);
     if (save)
-        result(light.saveWarmth());
+        light.saveWarmth();
     else {
         // The native slider disables automatic warmth on manual adjustment.
         // A cancelled touch must restore both the light and that preference.

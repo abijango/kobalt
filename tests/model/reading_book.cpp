@@ -93,9 +93,6 @@ public:
     void stopReading() override {
         ++calls.stopped;
     }
-    ReadingChapters *chapters() override {
-        return nullptr;
-    }
 
 private:
     Calls &calls;
@@ -229,8 +226,7 @@ int main(int argc, char **argv) {
         require(savedLayout["dictionary_id"].toString() == "test-dictionary", "Checkpoint lost dictionary choice");
         require(!storage::readJson(paths.preferences()).contains("show_clock"),
                 "Book layout changed global preferences");
-        require(!local.canWriteNative() && !local.deviceTransition() && !local.chapters(),
-                "Local book acquired platform services");
+        require(!local.canWriteNative() && !local.deviceTransition(), "Local book acquired platform services");
         local.pollProgress();
         local.observeProgress();
         require(!local.readProgress().valid && !local.pendingProgress(), "Local book invented external progress");

@@ -20,18 +20,34 @@ qint64 privateInterfaceFontBytes();
 enum class PrivateFontRegistration { Failed, Native, Private };
 // Retain reading-font bytes before user storage is released. CFF and font
 // collections stay on the private path, including their font-picker samples.
-PrivateFontRegistration registerPrivateInterfaceFont(const QString &path, const QString &expectedFamily);
+// forcePrivate also keeps TrueType previews out of Qt's font loader. Once a
+// retained file uses private painting, later registrations keep that choice.
+PrivateFontRegistration registerPrivateInterfaceFont(const QString &path, const QString &expectedFamily,
+                                                     bool forcePrivate = false);
 struct PrivateText {
     QImage image;
     int advance = 0;
     int height = 0;
     int missingGlyphs = 0;
+    int lineAscent = 0;
+    int lineHeight = 0;
+    QPoint origin;
 };
+enum class PrivateTextEmphasis { Synthetic, FontFace };
 // Keep native painting when the bundled primary face covers the whole label.
 bool needsPrivateText(const QString &text, const QFont &font);
 PrivateText renderPrivateText(const QString &text, const QFont &font, int weight = -1,
-                              const QVector<QPair<int, int>> &boldRanges = {});
-int measurePrivateText(const QString &text, const QFont &font, const QVector<QPair<int, int>> &boldRanges = {});
+                              const QVector<QPair<int, int>> &boldRanges = {},
+                              const QVector<QPair<int, int>> &underlineRanges = {},
+                              PrivateTextEmphasis emphasis = PrivateTextEmphasis::Synthetic,
+                              Qt::LayoutDirection direction = Qt::LayoutDirectionAuto);
+int measurePrivateText(const QString &text, const QFont &font, const QVector<QPair<int, int>> &boldRanges = {},
+                       PrivateTextEmphasis emphasis = PrivateTextEmphasis::Synthetic,
+                       Qt::LayoutDirection direction = Qt::LayoutDirectionAuto);
+PrivateText measurePrivateTextLayout(const QString &text, const QFont &font,
+                                     const QVector<QPair<int, int>> &boldRanges = {},
+                                     PrivateTextEmphasis emphasis = PrivateTextEmphasis::Synthetic,
+                                     Qt::LayoutDirection direction = Qt::LayoutDirectionAuto);
 QSize measurePrivateTextSize(const QString &text, const QFont &font);
 QString elidePrivateText(const QString &text, const QFont &font, int width,
                          const QVector<QPair<int, int>> &boldRanges = {});

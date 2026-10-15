@@ -17,6 +17,8 @@ public:
     std::function<void(std::unique_ptr<ReaderSession>)> finished;
     virtual bool readyForPresentation() const = 0;
     virtual void checkpoint() = 0;
+    // Limit the native-position wait to two seconds before file release.
+    virtual void prepareUsb(std::function<void()> finished) = 0;
     virtual void prepareShutdown(std::function<void()> finished) = 0;
     virtual void sleepReader() = 0;
     virtual void prepareWake() = 0;

@@ -4,6 +4,7 @@
 #include "assets/assets.h"
 #include "interfaces/reader/ui/style/private_text.h"
 #include "interfaces/reader/ui/controls/rows.h"
+#include "interfaces/reader/ui/controls/text.h"
 #include "interfaces/reader/ui/style/styles.h"
 #include "interfaces/reader/ui/style/theme.h"
 
@@ -72,9 +73,129 @@ inline void checkPrivateInterfaceText(const kobalt::AssetBundle &assets) {
     readingAlias.setPixelSize(32);
     require(!needsPrivateText(QStringLiteral("Hox"), readingAlias), "Covered TrueType reading text changed backend");
     require(needsPrivateText(QStringLiteral("第一章"), readingAlias), "Reading font did not use private CJK fallback");
+    require(registerPrivateInterfaceFont(assets.file("fonts/IBMPlexSans-Regular.ttf"), "Reading Test Alias", true) ==
+                    PrivateFontRegistration::Private &&
+                needsPrivateText(QStringLiteral("Hox"), readingAlias),
+            "Forced private painting reused a cached native registration");
+    require(registerPrivateInterfaceFont(assets.file("fonts/IBMPlexSans-Regular.ttf"), "Reading Test Alias") ==
+                PrivateFontRegistration::Private,
+            "A later registration put a private preview back on the native backend");
+    QTemporaryDir readingDirectory;
+    require(readingDirectory.isValid(), "Cannot create private reading-font fixture");
+    const auto readingPath = readingDirectory.path() + "/reading.ttf";
+    require(QFile::copy(assets.file("fonts/IBMPlexSans-Regular.ttf"), readingPath),
+            "Cannot copy private reading-font fixture");
+    const auto fontFamilies = [] {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        return QFontDatabase::families();
+#else
+        return QFontDatabase().families();
+#endif
+    };
+    const auto familiesBefore = fontFamilies();
+    require(registerPrivateInterfaceFont(readingPath, "Retained Reading Test", true) ==
+                PrivateFontRegistration::Private,
+            "TrueType preview requested native Qt registration");
+    require(fontFamilies() == familiesBefore, "Private reading registration changed Qt's font database");
+    require(QFile::remove(readingPath), "Cannot remove private reading-font fixture");
+    QFont retainedReading("Retained Reading Test");
+    retainedReading.setPixelSize(32);
+    const auto retainedSample = renderPrivateText(QStringLiteral("Hox"), retainedReading);
+    require(needsPrivateText(QStringLiteral("Hox"), retainedReading) && !retainedSample.image.isNull() &&
+                retainedSample.missingGlyphs == 0,
+            "Private TrueType preview could not render after its source file was removed");
     require(registerPrivateInterfaceFont(assets.root() + "/missing-font.ttf", "Missing") ==
                 PrivateFontRegistration::Failed,
             "Missing reading font was accepted");
+    require(registerPrivateInterfaceFont(assets.file("fonts/ebook-core/Libron-Regular.ttf"), "Private Excerpt Serif",
+                                         true) == PrivateFontRegistration::Private,
+            "Cannot register private excerpt serif");
+    require(registerPrivateInterfaceFont(assets.file("fonts/ebook-core/Libron-Bold.ttf"), "Private Excerpt Serif",
+                                         true) == PrivateFontRegistration::Private,
+            "Cannot register private excerpt bold");
+    WholeLineLabel excerpt;
+    excerpt.setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    excerpt.setStyleSheet("background:white;color:black;border:none;");
+    excerpt.resize(800, 120);
+    excerpt.setText("<div style=\"line-height:130%\"><b><u>More</u></b> fixture</div>");
+    const auto excerptPixels = [&](const QString &family) {
+        QFont face(family);
+        face.setPixelSize(32);
+        excerpt.setFont(face);
+        QImage image(excerpt.size(), QImage::Format_RGB32);
+        image.fill(Qt::white);
+        excerpt.render(&image);
+        return image;
+    };
+    const auto sansExcerpt = excerptPixels("Retained Reading Test");
+    const auto serifExcerpt = excerptPixels("Private Excerpt Serif");
+    require(sansExcerpt != serifExcerpt, "Search excerpts ignored their private reading face");
+    excerpt.setText("<div style=\"line-height:130%\"><b>More</b> fixture</div>");
+    const auto boldExcerpt = excerptPixels("Private Excerpt Serif");
+    int underlinePixels = 0;
+    for (int y = 0; y < serifExcerpt.height(); ++y) {
+        for (int x = 0; x < serifExcerpt.width(); ++x) {
+            underlinePixels += qGray(serifExcerpt.pixel(x, y)) < qGray(boldExcerpt.pixel(x, y));
+        }
+    }
+    require(underlinePixels > 50, "Private search match lost its underline pixels");
+    excerpt.setText("<div style=\"line-height:130%\">More fixture</div>");
+    require(excerptPixels("Private Excerpt Serif") != boldExcerpt, "Private search match lost its bold face");
+    const auto oneLine = excerptTextHeight("<div style=\"line-height:130%\">More</div>", excerpt.font(), 800);
+    const auto twoLines = excerptTextHeight("<div style=\"line-height:130%\">More<br>More</div>", excerpt.font(), 800);
+    require(twoLines == 2 * oneLine && twoLines > 80, "Private excerpt measurement lost reading line spacing");
+    const auto excerptMetrics = measurePrivateTextLayout("M", excerpt.font());
+    require(excerptMetrics.height == 33 && excerptMetrics.lineHeight == 43 && excerptMetrics.lineAscent == 34 &&
+                qAbs(twoLines - 111.8) < 0.01,
+            "Private excerpt lost the legacy book-font baseline and line box");
+    require(qMax(int(metrics::list::threeLines),
+                 metrics::search::excerptTop + qCeil(twoLines) + metrics::search::rowBottom) == 188,
+            "Private excerpt changed the established search row height");
+    // At 32px the pinned CJK header needs 37px above the baseline, while
+    // Naskh Arabic needs 21px below it. Neither face alone needs all 58px.
+    const auto mixedMetrics = measurePrivateTextLayout(QStringLiteral("中文 العربية"), excerpt.font());
+    require(mixedMetrics.lineAscent == 37 && mixedMetrics.lineHeight == 58,
+            "Mixed-script excerpt lost a fallback face's ascent or descent");
+    for (const int ppi : {212, 300}) {
+        setDensity(ppi);
+        for (const bool dark : {false, true}) {
+            QFont face = excerpt.font();
+            face.setPixelSize(metrics::search::excerptText);
+            excerpt.setFont(face);
+            const QString line = "<div style=\"line-height:130%\"><b><u>More</u></b> fixture</div>";
+            const int fullHeight = qCeil(excerptTextHeight(line, face, 800));
+            excerpt.resize(800, fullHeight);
+            excerpt.setStyleSheet(dark ? "background:black;color:white;border:none;"
+                                       : "background:white;color:black;border:none;");
+            excerpt.setText(line);
+            const auto firstLine = excerpt.grab().toImage();
+            excerpt.resize(800, fullHeight + 1);
+            excerpt.setText(QString(line).replace("</div>", "<br><b><u>More</u></b> fixture</div>"));
+            require(excerpt.grab().toImage().copy(0, 0, 800, fullHeight) == firstLine,
+                    "Private excerpt painted a clipped second line");
+        }
+    }
+    setDensity(designPpi);
+    excerpt.resize(800, 180);
+    excerpt.setStyleSheet("background:white;color:black;border:none;");
+    excerpt.setText(QStringLiteral("<div style=\"line-height:130%\">العربية<br><b><u>123</u></b></div>"));
+    const auto rtlExcerpt = excerpt.grab().toImage();
+    int leftInk = 0, rightInk = 0;
+    for (int y = 80; y < rtlExcerpt.height(); ++y) {
+        for (int x = 0; x < rtlExcerpt.width(); ++x) {
+            if (qGray(rtlExcerpt.pixel(x, y)) < 128) {
+                (x < 400 ? leftInk : rightInk)++;
+            }
+        }
+    }
+    require(rightInk > 50 && leftInk == 0, "Wrapped RTL excerpt lost paragraph direction on a numeric line");
+    excerpt.setFont(cjkFont);
+    excerpt.setText(QStringLiteral("<div style=\"line-height:130%\"><b><u>第一章</u></b> 한국어</div>"));
+    const auto beforeCjkExcerpt = fontFamilies();
+    const auto richCjk = excerpt.grab().toImage();
+    excerpt.clear();
+    require(richCjk != excerpt.grab().toImage() && fontFamilies() == beforeCjkExcerpt,
+            "CFF search excerpt lost text or registered its font with Qt");
     const QString clusterTitle = QStringLiteral("किं العربية 한국어");
     const auto clusterEllipsis = elidePrivateText(clusterTitle, font, 100);
     QTextBoundaryFinder clusterBoundary(QTextBoundaryFinder::Grapheme, clusterTitle);
@@ -150,4 +271,5 @@ inline void checkPrivateInterfaceText(const kobalt::AssetBundle &assets) {
         require(logicalLeft > label.width() / 2 && absoluteLeft < 100,
                 "Private RTL label did not preserve QLabel visual alignment and absolute left alignment");
     }
+    require(initializePrivateInterfaceText(assets), "Cannot restore private font state after component checks");
 }

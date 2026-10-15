@@ -149,6 +149,41 @@ def build_autotools(source, build, prefix, jobs=2, host=None, environment=None,
         run(engine, command + env_command + args)
 
 
+def device_dependency_inputs(root, selected, specs, image):
+    files = [root / 'tools/build.py', root / 'tools/build_engine.py', root / 'targets' / (selected.name + '.json'),
+             root / 'dependencies/crengine-patches.txt']
+    files += [root / 'dependencies/patches' / name for name in ENGINE_PATCHES]
+    return {'target': selected.name, 'image': image, 'root': str(root.resolve()),
+            'sources': {name: item['sha256'] for name, item in specs.items() if name != 'fonttools'},
+            'recipes': {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}}
+
+
+def device_dependencies_match(directory, identity):
+    if identity is None:
+        return False
+    try:
+        record = json.loads((directory / 'dependencies.json').read_text())
+        if record['identity'] != identity or not isinstance(record['files'], dict) or not record['files']:
+            return False
+        for name, digest in record['files'].items():
+            path = Path(name)
+            if path.is_absolute() or '..' in path.parts or hashlib.sha256((directory / path).read_bytes()).hexdigest() != digest:
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def record_device_dependencies(directory, identity, engine_library):
+    if identity is None:
+        return
+    files = [path for path in (directory / 'deps').rglob('*') if path.is_file()]
+    files += [engine_library, engine_library.parent / 'crsetup.h']
+    record = {'identity': identity, 'files': {path.relative_to(directory).as_posix():
+              hashlib.sha256(path.read_bytes()).hexdigest() for path in files}}
+    (directory / 'dependencies.json').write_text(json.dumps(record, indent=2) + '\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', choices=SUPPORTED_TARGETS, default=DEFAULT_TARGET, help='application integration (default: qt6)')
@@ -205,89 +240,105 @@ def main():
             command = ['run', '--rm', '--network', 'none', '-v', f'{ROOT}:/work:rw,z', '-w', '/work']
             for key, value in environment.items():
                 command.extend(['-e', f'{key}={value}'])
-            command.append(selected.toolchain_image)
+            image = subprocess.check_output([engine, 'image', 'inspect', '--format', '{{.Id}}', selected.toolchain_image], text=True).strip()
+            command.append(image)
         common = ['-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
                   '-DBUILD_SHARED_LIBS=OFF', f'-DCMAKE_INSTALL_PREFIX={prefix}', '-DCMAKE_INSTALL_LIBDIR=lib',
                   '-DPKG_CONFIG_EXECUTABLE=/usr/bin/pkg-config', f'-DCMAKE_PREFIX_PATH={prefix}']
         if selected.qt_major == 5:
             common += [f'-DCMAKE_FIND_ROOT_PATH={prefix};/tc/qt5/sysroot', f'-DCMAKE_PREFIX_PATH={prefix};/tc/qt5/sysroot/usr']
-        # CREngine uses KOReader's text and image callbacks, not stock LunaSVG.
-        # Patch a build copy; keep the verified upstream source unchanged.
-        svg_revision = hashlib.sha256((specs['lunasvg']['sha256'] + specs['koreader-base']['sha256']).encode()).hexdigest()[:16]
-        svg_source = ROOT / build_root / ('lunasvg-source-' + svg_revision)
-        svg_extensions = '/work/.cache/kobalt/' + specs['koreader-base']['directory'] + '/thirdparty/lunasvg'
-        if not svg_source.exists():
-            with tempfile.TemporaryDirectory(prefix='lunasvg-', dir=svg_source.parent) as temporary:
-                patched = Path(temporary) / 'source'
-                shutil.copytree(cache / specs['lunasvg']['directory'], patched)
-                for patch in ('cmake_tweaks.patch', 'extended.patch', 'pkgconfig.patch'):
-                    run(engine, command + ['patch', '--batch', '--forward', '-p1',
-                                           '-d', '/work/' + str(patched.relative_to(ROOT)),
-                                           '-i', svg_extensions + '/' + patch])
-                patched.rename(svg_source)
-        svg_build = str(build_root / 'lunasvg')
-        run(engine, command + ['cmake', '-S', str(svg_source.relative_to(ROOT)), '-B', svg_build, *common,
-                               '-DXTENDED_DIR=' + svg_extensions + '/xtended', '-DLUNASVG_BUILD_EXAMPLES=OFF',
-                               '-DCMAKE_C_VISIBILITY_PRESET=hidden', '-DCMAKE_CXX_VISIBILITY_PRESET=hidden',
-                               '-DCMAKE_VISIBILITY_INLINES_HIDDEN=ON'])
-        run(engine, command + ['cmake', '--build', svg_build, '--parallel', str(args.jobs)])
-        run(engine, command + ['cmake', '--install', svg_build])
-        extra = [('freetype', '', ['-DFT_DISABLE_HARFBUZZ=ON', '-DFT_DISABLE_BZIP2=ON', '-DFT_DISABLE_BROTLI=ON'])]
-        for name, suffix, options in extra + [
-            ('utf8proc', '', ['-DUTF8PROC_ENABLE_TESTING=OFF', '-DCMAKE_C_VISIBILITY_PRESET=hidden']),
-            ('libjpeg-turbo', '', ['-DENABLE_SHARED=OFF', '-DENABLE_STATIC=ON', '-DWITH_TURBOJPEG=OFF',
-                                  '-DWITH_TOOLS=OFF', '-DWITH_TESTS=OFF', '-DCMAKE_C_VISIBILITY_PRESET=hidden']),
-            ('xxhash', '/cmake_unofficial', ['-DXXHASH_BUILD_XXHSUM=OFF']),
-            ('harfbuzz', '', ['-DHB_BUILD_UTILS=OFF', '-DHB_BUILD_SUBSET=OFF', '-DHB_BUILD_RASTER=OFF',
-                '-DHB_BUILD_VECTOR=OFF', '-DHB_BUILD_GPU=OFF', '-DHB_HAVE_FREETYPE=ON', f'-DFREETYPE_LIBRARY={prefix}/lib/libfreetype.a',
-                f'-DFREETYPE_LIBRARY_RELEASE={prefix}/lib/libfreetype.a',
-                f'-DFREETYPE_INCLUDE_DIR_freetype2={prefix}/include/freetype2',
-                f'-DFREETYPE_INCLUDE_DIR_ft2build={prefix}/include/freetype2'])]:
-            build = str(build_root / (specs[name]['directory'] if name in ('freetype', 'harfbuzz') else name))
-            run(engine, command + ['cmake', '-S', '.cache/kobalt/' + specs[name]['directory'] + suffix,
-                                   '-B', build, *common, *options])
-            run(engine, command + ['cmake', '--build', build, '--parallel', str(args.jobs)])
-            run(engine, command + ['cmake', '--install', build])
-        if selected.qt_major == 6:
-            sensors = '.cache/kobalt/' + specs['qtsensors']['directory']
-            sensors_build = str(build_root / 'qtsensors')
-            run(engine, command + ['cmake', '-S', sensors, '-B', sensors_build, '-G', 'Ninja',
-                                   '-DCMAKE_BUILD_TYPE=Release', f'-DCMAKE_INSTALL_PREFIX={prefix}',
-                                   '-DCMAKE_INSTALL_LIBDIR=lib', '-DQT_BUILD_EXAMPLES=OFF', '-DQT_BUILD_TESTS=OFF'])
-            run(engine, command + ['cmake', '--build', sensors_build, '--parallel', str(args.jobs)])
-            run(engine, command + ['cmake', '--install', sensors_build])
-        autotools_host = ('arm-kobo-linux-gnueabihf' if selected.qt_major == 6 else 'arm-linux-gnueabihf')
-        autotools_env = ({'CC': 'arm-kobo-linux-gnueabihf-gcc', 'AR': 'arm-kobo-linux-gnueabihf-ar',
-                          'RANLIB': 'arm-kobo-linux-gnueabihf-ranlib'} if selected.qt_major == 6 else
-                         {'CC': '/tc/qt5/bin/gcc', 'AR': '/usr/bin/arm-linux-gnueabihf-ar',
-                          'RANLIB': '/usr/bin/arm-linux-gnueabihf-ranlib'})
-        for name in ('fribidi', 'libunibreak'):
-            build_autotools(cache / specs[name]['directory'], ROOT / build_root / (name + '-autotools'),
-                            ROOT / build_root / 'deps', args.jobs, autotools_host, autotools_env,
-                            engine=engine, container_command=command)
-        # Keep the verified dependency intact. Apply reader-specific resource
-        # and image-memory changes only to a build copy.
         patches = [ROOT / 'dependencies/patches' / name for name in ENGINE_PATCHES]
         revision = hashlib.sha256(specs['crengine']['sha256'].encode()
                                   + b''.join(patch.read_bytes() for patch in patches)).hexdigest()[:16]
         patched_source = ROOT / build_root / ('crengine-source-' + revision)
-        if not patched_source.exists():
-            with tempfile.TemporaryDirectory(prefix='crengine-', dir=patched_source.parent) as temporary:
-                patched = Path(temporary) / 'source'
-                shutil.copytree(cache / specs['crengine']['directory'], patched)
-                for patch in patches:
-                    run(engine, command + ['patch', '--batch', '--forward', '-p1',
-                                           '-d', '/work/' + str(patched.relative_to(ROOT)),
-                                           '-i', '/work/' + str(patch.relative_to(ROOT))])
-                patched.rename(patched_source)
         source = str(patched_source.relative_to(ROOT))
-        build = str(build_root / ('crengine-' + revision))
-        run(engine, command + ['cmake', '-S', source, '-B', build, *common,
-                               '-DAUTO=OFF', '-DFREETYPE=ON', '-DHARFBUZZ=ON', '-DLIBPNG=ON', '-DLIBJPEG=ON', '-DGIF=ON',
-                               '-DLUNASVG=ON', '-DZLIB=ON', '-DUTF8PROC=ON', '-DFRIBIDI=ON',
-                               '-DLIBUNIBREAK=ON', '-DMATHML=ON',
-                               '-U__pkg_config_checked_FREETYPE', '-UFREETYPE_*'])
-        run(engine, command + ['cmake', '--build', build, '--parallel', str(args.jobs)])
+        engine_build = str(build_root / ('crengine-' + revision))
+        dependency_inputs = None if args.in_toolchain else device_dependency_inputs(ROOT, selected, specs, image)
+        if device_dependencies_match(ROOT / build_root, dependency_inputs):
+            print('Reusing verified device dependencies', flush=True)
+        else:
+            # Discard configured compilers and objects when their SDK or recipe
+            # changes. Installed files must also be repaired after corruption.
+            if dependency_inputs is not None:
+                directories = ['deps', 'lunasvg', 'utf8proc', 'libjpeg-turbo', 'xxhash', 'qtsensors',
+                               specs['freetype']['directory'], specs['harfbuzz']['directory'],
+                               'fribidi-autotools', 'libunibreak-autotools', 'crengine-' + revision]
+                for name in directories:
+                    directory = ROOT / build_root / name
+                    if directory.exists():
+                        shutil.rmtree(directory)
+            # CREngine uses KOReader's text and image callbacks, not stock LunaSVG.
+            # Patch a build copy; keep the verified upstream source unchanged.
+            svg_revision = hashlib.sha256((specs['lunasvg']['sha256'] + specs['koreader-base']['sha256']).encode()).hexdigest()[:16]
+            svg_source = ROOT / build_root / ('lunasvg-source-' + svg_revision)
+            svg_extensions = '/work/.cache/kobalt/' + specs['koreader-base']['directory'] + '/thirdparty/lunasvg'
+            if not svg_source.exists():
+                with tempfile.TemporaryDirectory(prefix='lunasvg-', dir=svg_source.parent) as temporary:
+                    patched = Path(temporary) / 'source'
+                    shutil.copytree(cache / specs['lunasvg']['directory'], patched)
+                    for patch in ('cmake_tweaks.patch', 'extended.patch', 'pkgconfig.patch'):
+                        run(engine, command + ['patch', '--batch', '--forward', '-p1',
+                                               '-d', '/work/' + str(patched.relative_to(ROOT)),
+                                               '-i', svg_extensions + '/' + patch])
+                    patched.rename(svg_source)
+            svg_build = str(build_root / 'lunasvg')
+            run(engine, command + ['cmake', '-S', str(svg_source.relative_to(ROOT)), '-B', svg_build, *common,
+                                   '-DXTENDED_DIR=' + svg_extensions + '/xtended', '-DLUNASVG_BUILD_EXAMPLES=OFF',
+                                   '-DCMAKE_C_VISIBILITY_PRESET=hidden', '-DCMAKE_CXX_VISIBILITY_PRESET=hidden',
+                                   '-DCMAKE_VISIBILITY_INLINES_HIDDEN=ON'])
+            run(engine, command + ['cmake', '--build', svg_build, '--parallel', str(args.jobs)])
+            run(engine, command + ['cmake', '--install', svg_build])
+            extra = [('freetype', '', ['-DFT_DISABLE_HARFBUZZ=ON', '-DFT_DISABLE_BZIP2=ON', '-DFT_DISABLE_BROTLI=ON'])]
+            for name, suffix, options in extra + [
+                ('utf8proc', '', ['-DUTF8PROC_ENABLE_TESTING=OFF', '-DCMAKE_C_VISIBILITY_PRESET=hidden']),
+                ('libjpeg-turbo', '', ['-DENABLE_SHARED=OFF', '-DENABLE_STATIC=ON', '-DWITH_TURBOJPEG=OFF',
+                                      '-DWITH_TOOLS=OFF', '-DWITH_TESTS=OFF', '-DCMAKE_C_VISIBILITY_PRESET=hidden']),
+                ('xxhash', '/cmake_unofficial', ['-DXXHASH_BUILD_XXHSUM=OFF']),
+                ('harfbuzz', '', ['-DHB_BUILD_UTILS=OFF', '-DHB_BUILD_SUBSET=OFF', '-DHB_BUILD_RASTER=OFF',
+                    '-DHB_BUILD_VECTOR=OFF', '-DHB_BUILD_GPU=OFF', '-DHB_HAVE_FREETYPE=ON', f'-DFREETYPE_LIBRARY={prefix}/lib/libfreetype.a',
+                    f'-DFREETYPE_LIBRARY_RELEASE={prefix}/lib/libfreetype.a',
+                    f'-DFREETYPE_INCLUDE_DIR_freetype2={prefix}/include/freetype2',
+                    f'-DFREETYPE_INCLUDE_DIR_ft2build={prefix}/include/freetype2'])]:
+                build = str(build_root / (specs[name]['directory'] if name in ('freetype', 'harfbuzz') else name))
+                run(engine, command + ['cmake', '-S', '.cache/kobalt/' + specs[name]['directory'] + suffix,
+                                       '-B', build, *common, *options])
+                run(engine, command + ['cmake', '--build', build, '--parallel', str(args.jobs)])
+                run(engine, command + ['cmake', '--install', build])
+            if selected.qt_major == 6:
+                sensors = '.cache/kobalt/' + specs['qtsensors']['directory']
+                sensors_build = str(build_root / 'qtsensors')
+                run(engine, command + ['cmake', '-S', sensors, '-B', sensors_build, '-G', 'Ninja',
+                                       '-DCMAKE_BUILD_TYPE=Release', f'-DCMAKE_INSTALL_PREFIX={prefix}',
+                                       '-DCMAKE_INSTALL_LIBDIR=lib', '-DQT_BUILD_EXAMPLES=OFF', '-DQT_BUILD_TESTS=OFF'])
+                run(engine, command + ['cmake', '--build', sensors_build, '--parallel', str(args.jobs)])
+                run(engine, command + ['cmake', '--install', sensors_build])
+            autotools_host = ('arm-kobo-linux-gnueabihf' if selected.qt_major == 6 else 'arm-linux-gnueabihf')
+            autotools_env = ({'CC': 'arm-kobo-linux-gnueabihf-gcc', 'AR': 'arm-kobo-linux-gnueabihf-ar',
+                              'RANLIB': 'arm-kobo-linux-gnueabihf-ranlib'} if selected.qt_major == 6 else
+                             {'CC': '/tc/qt5/bin/gcc', 'AR': '/usr/bin/arm-linux-gnueabihf-ar',
+                              'RANLIB': '/usr/bin/arm-linux-gnueabihf-ranlib'})
+            for name in ('fribidi', 'libunibreak'):
+                build_autotools(cache / specs[name]['directory'], ROOT / build_root / (name + '-autotools'),
+                                ROOT / build_root / 'deps', args.jobs, autotools_host, autotools_env,
+                                engine=engine, container_command=command)
+            # Keep the verified dependency intact. Apply reader-specific resource
+            # and image-memory changes only to a build copy.
+            if not patched_source.exists():
+                with tempfile.TemporaryDirectory(prefix='crengine-', dir=patched_source.parent) as temporary:
+                    patched = Path(temporary) / 'source'
+                    shutil.copytree(cache / specs['crengine']['directory'], patched)
+                    for patch in patches:
+                        run(engine, command + ['patch', '--batch', '--forward', '-p1',
+                                               '-d', '/work/' + str(patched.relative_to(ROOT)),
+                                               '-i', '/work/' + str(patch.relative_to(ROOT))])
+                    patched.rename(patched_source)
+            run(engine, command + ['cmake', '-S', source, '-B', engine_build, *common,
+                                   '-DAUTO=OFF', '-DFREETYPE=ON', '-DHARFBUZZ=ON', '-DLIBPNG=ON', '-DLIBJPEG=ON', '-DGIF=ON',
+                                   '-DLUNASVG=ON', '-DZLIB=ON', '-DUTF8PROC=ON', '-DFRIBIDI=ON',
+                                   '-DLIBUNIBREAK=ON', '-DMATHML=ON',
+                                   '-U__pkg_config_checked_FREETYPE', '-UFREETYPE_*'])
+            run(engine, command + ['cmake', '--build', engine_build, '--parallel', str(args.jobs)])
+            record_device_dependencies(ROOT / build_root, dependency_inputs, ROOT / engine_build / 'libcrengine.a')
         run(engine, command + ['cmake', '-S', '.',
                                '-B', build_path, '-G', 'Ninja',
                                f'-DKOBALT_TARGET={selected.name}', f'-DKOBALT_VERSION={version}',
@@ -296,7 +347,7 @@ def main():
                                '-DKOBALT_PAGE_ANIMATIONS=' + ('ON' if args.page_animations else 'OFF'),
                                '-DKOBALT_MINI=' + ('ON' if args.mini else 'OFF'),
                                f'-DKOBALT_COMMIT={commit}', '-DKOBALT_COMMIT_MODIFIED=' + ('ON' if modified else 'OFF'),
-                               '-DCMAKE_BUILD_TYPE=Release', f'-DCRENGINE_SOURCE=/work/{source}', f'-DCRENGINE_BUILD=/work/{build}',
+                               '-DCMAKE_BUILD_TYPE=Release', f'-DCRENGINE_SOURCE=/work/{source}', f'-DCRENGINE_BUILD=/work/{engine_build}',
                                f'-DQt{selected.qt_major}Sensors_DIR=' + (f'{prefix}/lib/cmake/Qt6Sensors' if selected.qt_major == 6 else '/tc/qt5/sysroot/usr/lib/cmake/Qt5Sensors')])
         run(engine, command + ['cmake', '--build', build_path, '--parallel', str(args.jobs)] + (['--target', *args.build_target] if args.build_target else []))
 

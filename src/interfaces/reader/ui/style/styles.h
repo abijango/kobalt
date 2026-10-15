@@ -36,11 +36,12 @@ inline QString reader() {
 }
 inline QString segment() {
     return QString(
-               "QPushButton{border-radius:0;min-height:%1px;max-height:%1px;padding:%2px %3px;border:none;border-right:%4px solid palette(window);background:palette(midlight);} QPushButton:checked{background:palette(window-text);color:palette(window);} QPushButton:pressed{background:palette(mid);}")
-        .arg(metrics::control::segmentHeight)
-        .arg(metrics::control::segmentVerticalPadding)
-        .arg(metrics::control::segmentHorizontalPadding)
-        .arg(metrics::control::border);
+               "QPushButton{border-radius:0;min-height:%1px;max-height:%1px;padding:%2px %3px;border:%4px solid palette(window-text);border-left:none;background:palette(window);color:palette(window-text);} QPushButton[segment_first=\"true\"]{border-left:%4px solid palette(window-text);} QPushButton:checked{background:palette(window-text);color:palette(window);} QPushButton:pressed{background:palette(window-text);color:palette(window);}")
+               .arg(metrics::control::segmentHeight)
+               .arg(metrics::control::segmentVerticalPadding)
+               .arg(metrics::control::segmentHorizontalPadding)
+               .arg(metrics::control::border) +
+           "QPushButton{" + font(metrics::text::secondary) + "}";
 }
 inline QString outlined() {
     return QString(
@@ -94,6 +95,7 @@ inline QString dropdownChoice(bool selected, bool divider) {
            QString("QPushButton{color:%1;text-align:left;padding:0 %2px;min-height:0;}")
                .arg(selected ? "palette(window)" : "palette(window-text)")
                .arg(metrics::choices::textInset) +
-           (divider ? "QPushButton{border-top:1px solid palette(mid);}" : "");
+           (divider ? QString("QPushButton{border-top:%1px solid palette(mid);}").arg(metrics::control::border)
+                    : QString());
 }
 }

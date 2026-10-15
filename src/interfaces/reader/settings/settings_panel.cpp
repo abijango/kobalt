@@ -105,7 +105,7 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
                             animationsSupported ? strings::get("settings.animations_description")
                                                 : strings::get("settings.unsupported_description"));
     animationOption->setEnabled(animationsSupported);
-    bionicOption = check(displayPage, "rrBionicReading", strings::get("reader.bionic_reading"),
+    bionicOption = check(displayPage, "rrBionicReading", strings::get("reader.bold_reading"),
                          strings::get("reader.bionic_description"));
     int optionIndex = 0;
     for (auto *option : {darkOption, progressOption, bionicOption, animationOption}) {
@@ -130,6 +130,10 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
     linkIndicatorOption = check(advancedPage, "rrShowLinkIndicator", strings::get("reader.show_link_indicator"),
                                 strings::get("reader.link_indicator_description"));
     advancedRows->addWidget(linkIndicatorOption);
+    hideNonlinearOption =
+        check(advancedPage, "rrHideNonlinearFragments", strings::get("reader.hide_nonlinear_fragments"),
+              strings::get("settings.hide_nonlinear_fragments_description"));
+    advancedRows->addWidget(hideNonlinearOption);
     const bool lightSupported = inputs.lightSupported;
     edgeLightOption = check(advancedPage, "rrEdgeLight", strings::get("reader.edge_light"),
                             !lightSupported          ? strings::get("settings.unsupported_description")
@@ -316,9 +320,9 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
         settingsTabButtons[index == NativeUiSettings ? 5 : index]->setChecked(true);
     });
     settingsTabButtons.first()->setChecked(true);
-    QVector<ui::DescribedOption *> options = {linkIndicatorOption, darkOption,    progressOption,  bionicOption,
-                                              animationOption,     smoothOption,  edgeLightOption, heavierTextOption,
-                                              denseGraphOption,    pinStatsOption};
+    QVector<ui::DescribedOption *> options = {hideNonlinearOption, linkIndicatorOption, darkOption,    progressOption,
+                                              bionicOption,        animationOption,     smoothOption,  edgeLightOption,
+                                              heavierTextOption,   denseGraphOption,    pinStatsOption};
     if (hardcoverOption)
         options.append(hardcoverOption);
     if (inputs.desktopUi)
@@ -362,13 +366,16 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
         ui::readerStyle(
             button,
             QString(
-                "QPushButton{font-size:%1px;min-height:%2px;max-height:%2px;border:0;border-bottom:1px solid %3;border-right:1px solid palette(window-text);border-radius:0;text-align:left;padding:0 %4px;background:palette(window);color:palette(window-text);} QPushButton:checked{background:palette(window-text);color:palette(window);}")
+                "QPushButton{font-size:%1px;min-height:%2px;max-height:%2px;border:0;border-bottom:%5px solid %3;border-right:%5px solid palette(window-text);border-radius:0;text-align:left;padding:0 %4px;background:palette(window);color:palette(window-text);} QPushButton:checked{background:palette(window-text);color:palette(window);}")
                 .arg(c::railText)
                 .arg(c::railRowHeight)
                 .arg(c::dividerLight)
-                .arg(c::railInset));
+                .arg(c::railInset)
+                .arg(m::control::border));
     }
-    ui::readerStyle(settingsPages, "QStackedWidget{border:0;border-left:1px solid palette(window-text);}");
+    ui::readerStyle(
+        settingsPages,
+        QString("QStackedWidget{border:0;border-left:%1px solid palette(window-text);}").arg(m::control::border));
     ui::readerStyle(description, ui::styles::font(c::labelText));
     ui::readerStyle(version, ui::styles::font(c::descriptionText));
     ui::readerStyle(commit, ui::styles::font(ui::px(21)));

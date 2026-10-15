@@ -17,6 +17,11 @@
 
 namespace kobalt::ui {
 namespace m = metrics;
+void Button::initStyleOption(QStyleOptionButton *option) const {
+    QPushButton::initStyleOption(option);
+    // Keep keyboard focus without drawing Nickel's focus frame on reader buttons.
+    option->state &= ~QStyle::State_HasFocus;
+}
 void Button::mouseReleaseEvent(QMouseEvent *event) {
     // Qt repaints the released button synchronously before emitting clicked.
     // Queue that paint with the panel changes made by the click handler.
@@ -43,9 +48,42 @@ void Button::setPaintMode(ButtonPaintMode value) {
     update();
 }
 
-void Button::paintEvent(QPaintEvent *event) {
+bool Button::event(QEvent *event) {
+    // Qt repaints a hover-tracking widget when a pointer enters or leaves it.
+    // Reader buttons draw no hover state, so that repaint would only refresh
+    // unchanged pixels, for example a toolbar button when a drag starts.
+    if (isHoverEvent(event))
+        return true;
+    return QPushButton::event(event);
+}
+void Button::paintEvent(QPaintEvent *) {
     if (mode == ButtonPaintMode::Native) {
-        QPushButton::paintEvent(event);
+        if (iconLabelGap) {
+            QStyleOptionButton option;
+            initStyleOption(&option);
+            option.text.clear();
+            option.icon = QIcon();
+            QPainter painter(this);
+            style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
+            const bool active = isEnabled() && (isChecked() || isDown());
+            painter.setPen(palette().color(!isEnabled() ? QPalette::Mid
+                                           : active     ? QPalette::Window
+                                                        : QPalette::WindowText));
+            painter.setFont(font());
+            const int labelWidth = interfaceTextWidth(text(), font());
+            const int gap = text().isEmpty() ? 0 : iconLabelGap;
+            const int left = (width() - iconSize().width() - gap - labelWidth) / 2;
+            icon().paint(
+                &painter, QRect(left, (height() - iconSize().height()) / 2, iconSize().width(), iconSize().height()),
+                Qt::AlignCenter, isEnabled() ? QIcon::Normal : QIcon::Disabled, active ? QIcon::On : QIcon::Off);
+            drawInterfaceText(painter, QRect(left + iconSize().width() + gap, 0, labelWidth, height()), text(),
+                              Qt::AlignCenter);
+            return;
+        }
+        QStyleOptionButton option;
+        initStyleOption(&option);
+        QPainter painter(this);
+        style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
         return;
     }
     QPainter painter(this);
@@ -176,7 +214,8 @@ void StepButton::paintEvent(QPaintEvent *) {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(QPen(palette().color(isEnabled() ? QPalette::WindowText : QPalette::Midlight), m::control::border));
     painter.setBrush(palette().color(isEnabled() && isDown() ? QPalette::WindowText : QPalette::Window));
-    painter.drawRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5));
+    const qreal inset = int(m::control::border) / 2.0;
+    painter.drawRect(QRectF(rect()).adjusted(inset, inset, -inset, -inset));
     if (!isEnabled())
         painter.setOpacity(.4);
     (((isEnabled() && isDown()) != (palette().color(QPalette::Window) == Qt::black)) ? pressed : normal)
@@ -248,11 +287,7 @@ void CaptionButton::paintEvent(QPaintEvent *) {
         namespace c = m::chrome;
         QPainter painter(this);
         painter.fillRect(rect(), palette().color(isDown() ? QPalette::Midlight : QPalette::Window));
-        painter.setPen(dividerColor(this));
-        if (rule.testFlag(Qt::TopEdge))
-            painter.drawLine(0, 0, width(), 0);
-        if (rule.testFlag(Qt::BottomEdge))
-            painter.drawLine(0, height() - 1, width(), height() - 1);
+        paintEdges(painter, rect(), rule, dividerColor(this));
         painter.setPen(palette().color(QPalette::WindowText));
         QFont label = font();
         painter.setFont(label);

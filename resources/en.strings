@@ -75,8 +75,11 @@
 "common.percent" = "%1%";
 "common.previous_page" = "Previous page";
 "common.size_large" = "Large";
+"common.size_large_short" = "L";
 "common.size_medium" = "Medium";
+"common.size_medium_short" = "M";
 "common.size_small" = "Small";
+"common.size_small_short" = "S";
 
 /* components */
 "components.battery_level_unavailable" = "Battery level unavailable";
@@ -129,7 +132,6 @@
 "error.dictionary_lookup_is_unavailable_on_this_firmware" = "Dictionary lookup is unavailable on this firmware.";
 "error.dictionary_selection_is_unavailable" = "Dictionary selection is unavailable.";
 "error.dictionary_state_could_not_be_restored" = "Dictionary state could not be restored.";
-"error.encrypted_or_obfuscated_books_stay_in_nickel" = "Encrypted or obfuscated books stay in Nickel";
 "error.encrypted_or_unsupported_epub" = "Encrypted or unsupported EPUB";
 "error.expanded_publication_is_too_large" = "Expanded publication is too large";
 "error.explicit_native_bookmark_is_unsupported" = "Explicit native bookmark is unsupported";
@@ -144,13 +146,7 @@
 "error.missing_epub_container" = "Missing EPUB container";
 "error.missing_publication_body" = "Missing publication body";
 "error.missing_publication_container" = "Missing publication container";
-"error.native_chapter_book_changed" = "Native chapter book changed";
-"error.native_chapter_count_is_ambiguous" = "Native chapter count is ambiguous";
-"error.native_chapter_count_is_unavailable" = "Native chapter count is unavailable";
-"error.native_chapter_counts_do_not_match_the_chapter_list" = "Native chapter counts do not match the chapter list";
-"error.native_chapter_data_is_unavailable" = "Native chapter data is unavailable";
 "error.native_chapter_is_not_in_the_publication_spine" = "Native chapter is not in the publication spine";
-"error.native_chapter_list_exceeds_its_limit" = "Native chapter list exceeds its limit";
 "error.native_chapter_source_is_incomplete" = "Native chapter source is incomplete";
 "error.native_chapter_source_is_unavailable" = "Native chapter source is unavailable";
 "error.native_offset_splits_a_unicode_character" = "Native offset splits a Unicode character";
@@ -194,14 +190,13 @@
 "error.no_section_to_preview" = "No section to preview";
 "error.no_supported_native_reading_position" = "No supported native reading position";
 "error.opening_interrupted" = "Opening interrupted";
-"error.position_has_no_publication_element_id" = "Position has no publication element ID";
 "error.position_has_no_source_chapter" = "Position has no source chapter";
-"error.position_has_no_source_element_id" = "Position has no source element ID";
 "error.position_has_no_source_path" = "Position has no source path";
 "error.publication_declares_vertical_writing" = "This book uses an unsupported writing mode.";
 "error.publication_exceeds_the_memory_limit" = "Publication exceeds the memory limit";
 "error.publication_layout_inspection_is_incomplete" = "Publication layout inspection is incomplete";
 "error.publication_member_name_is_not_utf_8" = "Publication member name is not UTF-8";
+"error.publication_package_xml_is_invalid" = "The EPUB package contains invalid XML.";
 "error.publication_requires_right_to_left_page_navigation" = "Publication requires right-to-left page navigation";
 "error.publication_session_resource_mismatch" = "Publication session resource mismatch";
 "error.publication_transfer_is_incomplete" = "Publication transfer is incomplete";
@@ -242,8 +237,9 @@
 "image.unavailable" = "Image could not be loaded";
 
 /* light_panel */
+"light_panel.automatic_brightness" = "Automatic brightness";
+"light_panel.automatic_brightness_description" = "Uses the ambient light sensor. Manual adjustments turn this off.";
 "light_panel.brightness" = "Brightness";
-"light_panel.could_not_save_light_settings" = "Could not save light settings";
 "light_panel.warmth" = "Warmth";
 
 /* link_panel */
@@ -271,8 +267,8 @@
 "reader.align_left" = "Align left";
 "reader.alignment" = "Alignment";
 "reader.applying_appearance_changes" = "Applying appearance changes...";
-"reader.enabling_bionic_reading" = "Enabling bionic reading...";
-"reader.disabling_bionic_reading" = "Disabling bionic reading...";
+"reader.enabling_bold_reading" = "Enabling Bold reading...";
+"reader.disabling_bold_reading" = "Disabling Bold reading...";
 "reader.updating_page_layout" = "Updating page layout...";
 "reader.auto_alignment" = "Auto alignment";
 "reader.automatic_rotation" = "Automatic rotation";
@@ -292,6 +288,8 @@
 "reader.contents_detail" = "Contents: %1";
 "reader.could_not_change_dark_mode" = "Could not change dark mode";
 "reader.could_not_save_reader_settings" = "Could not save reader settings";
+"reader.settings_write_error" = "Disk write error";
+"reader.settings_write_error_description" = "Kobalt could not save your reader settings. Check the available storage space and try again.";
 "reader.could_not_save_reading_position" = "Could not save reading position";
 "reader.dark_mode" = "Dark mode";
 "reader.debug_progress" = "Debug progress";
@@ -315,11 +313,11 @@
 /* Arguments: %1 */
 "reader.make_default_font" = "Make %1 your default?";
 "reader.make_default" = "Make default";
-"reader.default_font_instructions" = "Long press another font to make it the default. The chosen font will show Default font below its name. Publisher Fonts uses your default when the book has no embedded fonts.";
+"reader.default_font_instructions" = "Long press another font to make it the default override for new books. The chosen font will show Default font below its name. Publisher Fonts keeps its automatic fallbacks.";
 /* Arguments: %1 */
 "reader.already_default_font" = "%1 is already your default font.";
-"reader.make_default_font_description" = "It will show Default font below its name and be used by Publisher Fonts when a book has no embedded fonts.";
-"reader.restore_default_font_description" = "Libron will be used by Publisher Fonts when a book has no embedded fonts. Default font will appear below Libron.";
+"reader.make_default_font_description" = "It will show Default font below its name and become the initial font override for new books. Publisher Fonts keeps its automatic fallbacks.";
+"reader.restore_default_font_description" = "Libron will become the initial font override for new books. Default font will appear below Libron.";
 "reader.font_weight" = "Variable weight:";
 "reader.font_thickness" = "Thickness: +";
 "reader.footer" = "Footer";
@@ -581,12 +579,22 @@
 "reader.tap_revealed_link" = "Tap a highlighted link for options";
 "reader.tap_elsewhere_to_exit" = "Tap elsewhere to exit";
 
-"reader.bionic_reading" = "Bionic reading";
+"reader.bold_reading" = "Bold reading";
 "reader.bionic_description" = "Emphasize word beginnings in bold. Thickness and variable weight are unavailable while enabled.";
-"reader.bionic_weight_locked" = "Bionic reading";
+"reader.bionic_weight_locked" = "Bold reading";
 
 /* Arguments: %1 installed version */
 "native_ui.recovered_assets_message" = "Filesystem damage was detected, or a file was not transferred correctly. Please reinstall Kobalt and try again.\n\nInstalled version: %1";
 
 "native_ui.removing_kobalt" = "Removing Kobalt";
 "native_ui.restarting_device" = "Restarting your device...";
+
+"reader.lock_portrait" = "Lock portrait";
+"reader.lock_landscape" = "Lock landscape";
+
+"reader.both" = "Both";
+"reader.formatting_warning" = "Formatting warning";
+"reader.formatting_warning_description" = "This book may have formatting issues. You can keep reading, but some text or layout may not appear as intended.";
+
+"reader.hide_nonlinear_fragments" = "Hide non-linear fragments";
+"settings.hide_nonlinear_fragments_description" = "Skip non-linear sections when turning pages. Links, Chapters and page numbers can still open them.";

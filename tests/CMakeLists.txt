@@ -30,6 +30,7 @@ add_test(NAME ui-icon-vectors COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS
 add_test(NAME bundled-fonts COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS}/tooling/test_bundled_fonts.py")
 add_test(NAME mini-build COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS}/tooling/test_mini_build.py")
 add_test(NAME dependency-extraction COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS}/tooling/test_build.py")
+add_test(NAME host-dependency-cache COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS}/tooling/test_run_tests.py")
 add_test(NAME install-receipt COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${KOBALT_TESTS}/tooling" -p test_install_receipt.py)
 add_test(NAME kobo-build-script COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover -s "${KOBALT_TESTS}/tooling" -p test_kobo_build.py)
 add_test(NAME coverage-report COMMAND "${Python3_EXECUTABLE}" -B "${KOBALT_TESTS}/tooling/test_test_coverage.py")
@@ -111,11 +112,14 @@ kobalt_check(layout-compatibility SOURCES tests/model/layout_compatibility.cpp s
 kobalt_check(layout-cache SOURCES tests/model/layout_cache.cpp src/storage/layout_cache.cpp
     src/publication/layout_compatibility.cpp src/publication/resource_cache.cpp LIBRARIES Qt6::Core)
 kobalt_check(resource-cache SOURCES tests/model/resource_cache.cpp src/publication/resource_cache.cpp LIBRARIES Qt6::Core)
+kobalt_check(local-resources SOURCES tests/model/local_resources.cpp src/publication/local_resources.cpp
+    src/publication/resource_cache.cpp src/publication/image_policy.cpp src/publication/publication.cpp
+    src/publication/zip_resource.cpp LIBRARIES Qt6::Core ZLIB::ZLIB Threads::Threads)
 kobalt_check(zip-resource SOURCES tests/model/zip_resource.cpp src/publication/zip_resource.cpp LIBRARIES Qt6::Core ZLIB::ZLIB)
 kobalt_check(diagnostics SOURCES tests/model/diagnostics.cpp src/support/diagnostics.cpp LIBRARIES Qt6::Core)
 kobalt_check(engine-activity SOURCES tests/model/engine_activity.cpp LIBRARIES Threads::Threads)
 kobalt_check(brightness-gesture SOURCES tests/model/brightness_gesture.cpp LIBRARIES Qt6::Core)
-kobalt_check(chapter-word-count SOURCES tests/model/chapter_word_count.cpp LIBRARIES Qt6::Core)
+kobalt_check(logical-word-counter SOURCES tests/model/logical_word_counter.cpp LIBRARIES Qt6::Core)
 kobalt_check(reading-pace SOURCES tests/model/reading_pace.cpp LIBRARIES Qt6::Core)
 kobalt_check(screen-refresh SOURCES tests/model/screen_refresh.cpp LIBRARIES Qt6::Core)
 kobalt_check(font-registration SOURCES tests/model/font_registration.cpp LIBRARIES Qt6::Gui
@@ -151,8 +155,16 @@ kobalt_check(resource-provider SOURCES tests/model/resource_provider.cpp src/pub
 
 # Reader widgets without an engine.
 set(KOBALT_DEPENDENCY_PREFIX "${KOBALT_TEST_DEPENDENCIES}")
-add_library(reader-fonts STATIC "${KOBALT_ROOT}/src/assets/assets.cpp" "${KOBALT_ROOT}/src/assets/bundled_fonts.cpp")
-target_link_libraries(reader-fonts PUBLIC Qt6::Gui)
+add_executable(font-outlines-check "${KOBALT_TESTS}/support/font_outlines.cpp")
+target_compile_options(font-outlines-check PRIVATE -Wall -Wextra -Werror)
+target_include_directories(font-outlines-check PRIVATE "${KOBALT_TEST_DEPENDENCIES}/include/freetype2")
+target_link_libraries(font-outlines-check PRIVATE "${KOBALT_TEST_DEPENDENCIES}/lib/libfreetype.a" ZLIB::ZLIB ${KOBALT_TEST_PNG})
+set_tests_properties(mini-build PROPERTIES ENVIRONMENT "KOBALT_TEST_OUTLINE_CHECK=$<TARGET_FILE:font-outlines-check>")
+add_library(reader-fonts STATIC "${KOBALT_ROOT}/src/assets/assets.cpp" "${KOBALT_ROOT}/src/assets/bundled_fonts.cpp"
+    "${KOBALT_ROOT}/src/assets/system_fonts.cpp")
+target_link_libraries(reader-fonts PUBLIC Qt6::Gui PRIVATE ZLIB::ZLIB)
+kobalt_check(system-fonts SOURCES tests/model/system_fonts.cpp LIBRARIES reader-fonts
+    ARGUMENTS "${KOBALT_TEST_FIXTURES}/font.ttf")
 include("${KOBALT_ROOT}/cmake/EngineSources.cmake")
 kobalt_test_options(reader-fonts)
 include("${KOBALT_ROOT}/cmake/ReaderComponents.cmake")
@@ -162,13 +174,15 @@ add_subdirectory("${KOBALT_ROOT}/src/interfaces/reader/ui" reader-widgets)
 # kobalt_widget_test(NAME SOURCES files... LIBRARIES targets...)
 # Builds a widget test and runs it on the headless platform.
 function(kobalt_widget_test name)
-    cmake_parse_arguments(widget "" "" "SOURCES;LIBRARIES;ARGUMENTS;ENVIRONMENT" ${ARGN})
+    cmake_parse_arguments(widget "SHARDED" "" "SOURCES;LIBRARIES;ARGUMENTS;ENVIRONMENT" ${ARGN})
     add_executable(${name}-test ${widget_SOURCES})
     target_link_libraries(${name}-test PRIVATE ${widget_LIBRARIES} Qt6::Test)
     kobalt_test_options(${name}-test)
-    add_test(NAME ${name} COMMAND ${name}-test ${widget_ARGUMENTS})
-    set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};QT_STYLE_OVERRIDE=Fusion;${widget_ENVIRONMENT}")
+    if(NOT widget_SHARDED)
+        add_test(NAME ${name} COMMAND ${name}-test ${widget_ARGUMENTS})
+        set_tests_properties(${name} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};QT_STYLE_OVERRIDE=Fusion;${widget_ENVIRONMENT}")
+    endif()
 endfunction()
 
 set(component_sources "${KOBALT_TESTS}/model/ui.cpp")
@@ -187,6 +201,7 @@ qt_add_resources(acknowledgments-components-test component_notices PREFIX "/koba
     BASE "${KOBALT_ROOT}/resources" FILES "${KOBALT_ROOT}/resources/acknowledgments.json" ${notices})
 
 kobalt_widget_test(reader-canvas-input SOURCES "${KOBALT_TESTS}/native-ui/reader_canvas_test.cpp" LIBRARIES Qt6::Widgets)
+kobalt_widget_test(test-shards SOURCES "${KOBALT_TESTS}/native-ui/test_shards_test.cpp" LIBRARIES Qt6::Core)
 
 kobalt_widget_test(native-ui-smoke SOURCES "${KOBALT_TESTS}/native-ui/main.cpp" "${KOBALT_TESTS}/native-ui/host_display.cpp"
     "${KOBALT_ROOT}/src/interfaces/reader/settings/settings_panel.cpp"
@@ -202,6 +217,14 @@ kobalt_widget_test(nickel-browser-handoff SOURCES "${KOBALT_TESTS}/nickel/browse
     LIBRARIES Qt6::Widgets)
 kobalt_widget_test(nickel-window-presentation SOURCES "${KOBALT_TESTS}/nickel/window_presentation_test.cpp"
     "${KOBALT_ROOT}/src/platform/nickel/common/window_presentation.cpp" LIBRARIES Qt6::Widgets)
+kobalt_widget_test(nickel-usb-dialog-overlay SOURCES "${KOBALT_TESTS}/nickel/usb_dialog_overlay_test.cpp"
+    LIBRARIES Qt6::Widgets)
+kobalt_widget_test(nickel-usb-transition SOURCES "${KOBALT_TESTS}/nickel/usb_transition_test.cpp"
+    LIBRARIES Qt6::Widgets)
+find_package(Qt6 QUIET COMPONENTS Sql)
+if(TARGET Qt6::Sql)
+    kobalt_check(nickel-database-wait SOURCES tests/nickel/native_database_wait.cpp LIBRARIES Qt6::Sql)
+endif()
 kobalt_widget_test(nickel-lifecycle SOURCES "${KOBALT_TESTS}/nickel/native_lifecycle_test.cpp"
     "${KOBALT_ROOT}/src/platform/nickel/common/native_lifecycle.cpp"
     "${KOBALT_ROOT}/src/platform/nickel/common/native_lifecycle.h"
@@ -209,6 +232,16 @@ kobalt_widget_test(nickel-lifecycle SOURCES "${KOBALT_TESTS}/nickel/native_lifec
 target_compile_definitions(nickel-lifecycle-test PRIVATE KOBALT_READER_HARDWARE
     KOBALT_CONFIG_DIR="/unused" KOBALT_SYSTEM_FONT_DIRECTORY="/unused")
 set_target_properties(nickel-lifecycle-test PROPERTIES ENABLE_EXPORTS TRUE)
+
+kobalt_widget_test(nickel-light-panel SOURCES "${KOBALT_TESTS}/nickel/light_panel_test.cpp"
+    "${KOBALT_ROOT}/src/interfaces/reader/panels/light_panel.cpp" LIBRARIES reader-widgets)
+
+kobalt_widget_test(nickel-light SOURCES "${KOBALT_TESTS}/nickel/native_light_test.cpp"
+    "${KOBALT_ROOT}/src/platform/nickel/qt5/native_light.cpp"
+    "${KOBALT_ROOT}/src/platform/nickel/common/native_light.h"
+    "${KOBALT_ROOT}/src/support/diagnostics.cpp" LIBRARIES Qt6::Widgets Threads::Threads ${CMAKE_DL_LIBS})
+target_compile_definitions(nickel-light-test PRIVATE KOBALT_READER_HARDWARE)
+set_target_properties(nickel-light-test PROPERTIES ENABLE_EXPORTS TRUE)
 
 # The ioctl adapter requires Linux framebuffer headers.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -238,6 +271,7 @@ foreach(input CRENGINE_SOURCE CRENGINE_BUILD KOBALT_TEST_DEPENDENCIES KOBALT_TES
     endif()
 endforeach()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Sensors)
+kobalt_check(reader-orientation SOURCES tests/model/reader_orientation.cpp src/platform/api/reader_orientation.cpp LIBRARIES Qt6::Sensors Qt6::Gui)
 file(READ "${CRENGINE_SOURCE}/cr3gui/data/html5.css" READER_HTML_CSS)
 configure_file("${KOBALT_ROOT}/src/engine/crengine/reader_styles.h.in" reader_styles.h @ONLY)
 file(GLOB READER_HYPHENATION_PATTERNS RELATIVE "${CRENGINE_SOURCE}/cr3gui/data/hyph" "${CRENGINE_SOURCE}/cr3gui/data/hyph/*.pattern")
@@ -273,11 +307,16 @@ function(kobalt_engine_check name)
     target_include_directories(${name}-check SYSTEM PRIVATE ${engine_headers})
 endfunction()
 kobalt_check(dictionary-store SOURCES tests/model/dictionary_store.cpp LIBRARIES test-reading)
-kobalt_engine_check(font-sources ARGUMENTS "${KOBALT_TEST_FIXTURES}/font.ttf")
+kobalt_engine_check(font-sources ARGUMENTS "${KOBALT_TEST_FIXTURES}/font.ttf" "${KOBALT_TEST_FIXTURES}/text.epub")
 kobalt_engine_check(reader LIBRARIES test-positions
     ARGUMENTS "${KOBALT_TEST_FIXTURES}/text.epub" "${KOBALT_TEST_FIXTURES}/color.epub")
 kobalt_engine_check(search ARGUMENTS "${KOBALT_TEST_FIXTURES}/dictionary.epub")
 kobalt_engine_check(word-selection ARGUMENTS "${KOBALT_TEST_FIXTURES}/dictionary.epub")
+kobalt_engine_check(document-word-count ARGUMENTS "${KOBALT_TEST_FIXTURES}/word-counts.epub"
+    "${KOBALT_TEST_FIXTURES}/word-count-many.epub")
+add_executable(word-count-benchmark "${KOBALT_ROOT}/tests/model/word_count_benchmark.cpp")
+target_link_libraries(word-count-benchmark PRIVATE test-reader-model)
+kobalt_test_options(word-count-benchmark)
 kobalt_engine_check(alignment)
 kobalt_engine_check(vertical-writing)
 kobalt_engine_check(mathml)
@@ -325,6 +364,9 @@ kobalt_check(reading-book SOURCES tests/model/reading_book.cpp LIBRARIES test-re
     ARGUMENTS "${KOBALT_TEST_FIXTURES}/text.epub")
 kobalt_check(reader-session SOURCES tests/model/reader_session.cpp LIBRARIES test-reader-runtime
     ARGUMENTS "${KOBALT_TEST_FIXTURES}/text.epub" "${KOBALT_TEST_FIXTURES}/publisher-non-linear.epub")
+kobalt_check(local-reader SOURCES tests/model/local_reader.cpp src/support/diagnostics.cpp LIBRARIES test-reading
+    ARGUMENTS "${KOBALT_TEST_FIXTURES}/local-cache.epub" "${KOBALT_TEST_FIXTURES}/color.epub")
+set_tests_properties(local-reader PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM}")
 kobalt_check(bookmark-session SOURCES tests/model/bookmark_session.cpp LIBRARIES test-reader-runtime
     ARGUMENTS "${KOBALT_TEST_FIXTURES}/text.epub")
 kobalt_check(engine-resource-cache SOURCES tests/model/resource_cache.cpp LIBRARIES test-reader-runtime)
@@ -335,7 +377,7 @@ kobalt_widget_test(android-ui SOURCES "${KOBALT_TESTS}/android/android_ui_test.c
 kobalt_widget_test(android-reader-lifecycle SOURCES "${KOBALT_TESTS}/android/android_reader_test.cpp"
     "${KOBALT_ROOT}/src/platform/android/reader.cpp" LIBRARIES test-reader-runtime
     ENVIRONMENT "KOBALT_FIXTURES=${KOBALT_TEST_FIXTURES}")
-kobalt_widget_test(desktop-window SOURCES "${KOBALT_TESTS}/desktop/window_test.cpp"
+kobalt_widget_test(desktop-window SHARDED SOURCES "${KOBALT_TESTS}/desktop/window_test.cpp"
     "${KOBALT_ROOT}/src/platform/desktop/window.cpp" "${KOBALT_ROOT}/src/platform/desktop/services.cpp"
     "${KOBALT_ROOT}/src/platform/android/reader.cpp" "${KOBALT_ROOT}/src/platform/android/start_screen.cpp"
     LIBRARIES interactive-reader-runtime)
@@ -354,13 +396,35 @@ target_link_libraries(reader-test PRIVATE test-reader-runtime test-positions Qt6
 kobalt_test_options(reader-test)
 qt_add_resources(reader-test reader-test-notices PREFIX "/kobalt" BASE "${KOBALT_ROOT}/resources"
     FILES "${KOBALT_ROOT}/resources/acknowledgments.json" ${notices})
-# Both runs share one state directory, so they must not run in parallel.
+# Each reader process owns its state and capture directory.
 add_test(NAME reader-window-device COMMAND reader-test deviceCapabilities overflowClosesCurrentPanel tabsCloseBookmarks)
-set_tests_properties(reader-window-device PROPERTIES RESOURCE_LOCK reader-state
-    ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};KOBALT_FIXTURES=${KOBALT_TEST_FIXTURES};KOBALT_TEST_DEVICE_FIXTURE=libra-colour")
-add_test(NAME reader-window COMMAND reader-test)
-set_tests_properties(reader-window PROPERTIES RESOURCE_LOCK reader-state
-    ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};KOBALT_FIXTURES=${KOBALT_TEST_FIXTURES}")
+set(device_work "${CMAKE_CURRENT_BINARY_DIR}/work/reader-window-device")
+file(MAKE_DIRECTORY "${device_work}")
+set_tests_properties(reader-window-device PROPERTIES WORKING_DIRECTORY "${device_work}"
+    ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};KOBALT_FIXTURES=${KOBALT_TEST_FIXTURES};KOBALT_TEST_DEVICE_FIXTURE=libra-colour;KOBALT_TEST_STATE=${device_work}/test-state")
+foreach(shard RANGE 0 11)
+    set(work "${CMAKE_CURRENT_BINARY_DIR}/work/reader-window-${shard}")
+    file(MAKE_DIRECTORY "${work}")
+    add_test(NAME reader-window-${shard} COMMAND reader-test)
+    set_tests_properties(reader-window-${shard} PROPERTIES WORKING_DIRECTORY "${work}" COST 10
+        ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};KOBALT_FIXTURES=${KOBALT_TEST_FIXTURES};KOBALT_TEST_SHARD=${shard}/12;KOBALT_TEST_STATE=${work}/test-state")
+endforeach()
+foreach(shard RANGE 0 7)
+    set(work "${CMAKE_CURRENT_BINARY_DIR}/work/desktop-window-${shard}")
+    file(MAKE_DIRECTORY "${work}")
+    add_test(NAME desktop-window-${shard} COMMAND desktop-window-test)
+    set_tests_properties(desktop-window-${shard} PROPERTIES WORKING_DIRECTORY "${work}" COST 10
+        ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};QT_STYLE_OVERRIDE=Fusion;KOBALT_TEST_SHARD=${shard}/8;KOBALT_TEST_EXCLUDE=canvasBookLifecycle")
+endforeach()
+foreach(shard RANGE 0 4)
+    set(work "${CMAKE_CURRENT_BINARY_DIR}/work/desktop-window-books-${shard}")
+    file(MAKE_DIRECTORY "${work}")
+    add_test(NAME desktop-window-books-${shard} COMMAND desktop-window-test canvasBookLifecycle)
+    set_tests_properties(desktop-window-books-${shard} PROPERTIES WORKING_DIRECTORY "${work}" COST 14
+        ENVIRONMENT "QT_QPA_PLATFORM=${KOBALT_TEST_PLATFORM};QT_STYLE_OVERRIDE=Fusion;KOBALT_TEST_DATA_SHARD=${shard}/5")
+endforeach()
+set_tests_properties(desktop-window-6 PROPERTIES COST 16)
+set_tests_properties(reader PROPERTIES COST 25)
 
 # The interactive reader for manual checks. Not a test.
 add_executable(kobalt-test-reader "${KOBALT_TESTS}/native-ui/reader_main.cpp")

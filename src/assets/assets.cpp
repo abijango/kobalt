@@ -159,6 +159,38 @@ QByteArray AssetBundle::fontData(const QString &name) const {
     const auto read = deferredFontData(name);
     return read ? read() : QByteArray();
 }
+QByteArray AssetBundle::manifestFontData(const QString &name) const {
+    {
+        QMutexLocker lock(&data->mutex);
+        if (data->checked.isEmpty()) {
+            const auto path = file("fonts/" + name);
+            QFile manifest(data->root + "/manifest.json");
+            if (path.isEmpty() || !regular(QFileInfo(manifest)) || !manifest.open(QIODevice::ReadOnly) ||
+                manifest.size() > 65536)
+                return {};
+            const auto document = QJsonDocument::fromJson(manifest.readAll()).object();
+            if (document.value("schema").toInt() != 1 || document.value("version").toString() != data->version)
+                return {};
+            for (const auto &value : document.value("files").toArray()) {
+                const auto entry = value.toObject();
+                if (entry.value("path").toString() != "fonts/" + name)
+                    continue;
+                const qint64 size = qint64(entry.value("size").toDouble(-1));
+                QFile font(path);
+                if (size < 0 || size > 32 * 1024 * 1024 || !regularMember(data->root, path) ||
+                    !font.open(QIODevice::ReadOnly) || font.size() != size)
+                    return {};
+                const auto bytes = font.readAll();
+                return bytes.size() == size && QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex() ==
+                                                   entry.value("sha256").toString().toLatin1()
+                           ? bytes
+                           : QByteArray();
+            }
+            return {};
+        }
+    }
+    return fontData(name);
+}
 std::function<QByteArray()> AssetBundle::deferredFontData(const QString &name) const {
     if (!available())
         return {};

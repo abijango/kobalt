@@ -36,13 +36,26 @@ void PagerBar::paintEvent(QPaintEvent *) {
     painter.fillRect(rect(), palette().color(QPalette::Window));
     painter.fillRect(0, 0, width(), m::control::border, dividerColor(this));
 }
-void PagerBar::setPage(int page, int count, const QString &label) {
+void PagerBar::setPage(int page, int count, const QString &label, bool wrap) {
     count = qMax(1, count);
     page = qBound(0, page, count - 1);
     counter->setText(label.isEmpty() ? strings::get("navigation.page_count").arg(page + 1).arg(count) : label);
-    previous->setEnabled(page > 0);
-    next->setEnabled(page + 1 < count);
+    this->page = page;
+    this->count = count;
+    this->wrap = wrap;
+    previous->setEnabled(count > 1 && (wrap || page > 0));
+    next->setEnabled(count > 1 && (wrap || page + 1 < count));
     setVisible(count > 1);
+}
+int PagerBar::turnTarget(int direction) const {
+    if (count <= 1 || direction == 0) {
+        return page;
+    }
+    const int target = page + (direction > 0 ? 1 : -1);
+    if (wrap) {
+        return target < 0 ? count - 1 : target >= count ? 0 : target;
+    }
+    return qBound(0, target, count - 1);
 }
 PageControls::PageControls(QWidget *parent, const QString &prefix, bool compact) : QWidget(parent), compact(compact) {
     // The enclosing panel owns the background and perimeter. A full-width

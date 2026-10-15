@@ -10,7 +10,6 @@ set(KOBALT_NICKEL4_ADAPTER_SOURCES
     ${KOBALT_ARCHIVE_SOURCE} src/publication/resource_server.cpp src/publication/loopback.cpp
     ${KOBALT_PROVIDER_SOURCE} src/platform/nickel/common/publication_source.cpp
     src/platform/nickel/qt5/native_opening.cpp src/platform/nickel/qt5/native_publication.cpp
-    src/platform/nickel/qt5/native_chapters.cpp
     src/platform/nickel/qt5/native_progress.cpp src/platform/nickel/common/native_progress.h
     src/platform/nickel/qt5/native_reading_session.cpp
     src/platform/nickel/qt5/native_authorization.cpp src/platform/nickel/common/native_authorization.h

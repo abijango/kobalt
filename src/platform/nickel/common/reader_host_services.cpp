@@ -21,6 +21,15 @@ public:
     bool initialize() override {
         return adapter && adapter->initialize();
     }
+    bool hasAutomaticBrightness() const override {
+        return adapter && adapter->hasAutomaticBrightness();
+    }
+    bool automaticBrightness() const override {
+        return adapter && adapter->automaticBrightness();
+    }
+    bool setAutomaticBrightness(bool enabled) override {
+        return adapter && adapter->setAutomaticBrightness(enabled);
+    }
     bool hasWarmth() const override {
         return adapter && adapter->hasWarmth();
     }

@@ -4,13 +4,16 @@
 #include "publication/native_resources.h"
 #include "publication/native_archive.h"
 #include "publication/resource_server.h"
+#include "support/diagnostics.h"
 #include "support/qt_compat.h"
 #include "publication/zip_resource.h"
 #include "support/strings.h"
 #include "check.h"
 #include <QGuiApplication>
+#include <QJsonDocument>
 #include <QEventLoop>
 #include <QFileInfo>
+#include <QDir>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -26,6 +29,7 @@ int run(int argc, char **argv) {
     require(argc == 3, "Expected text and non-linear synthetic EPUBs");
     const auto path = QFileInfo(QString::fromLocal8Bit(argv[1])).absoluteFilePath();
     const auto publisherPath = QFileInfo(QString::fromLocal8Bit(argv[2])).absoluteFilePath();
+    QString servedPath = path;
     // Serve the synthetic archive with the same framing as the resource
     // adapter, so the GUI facade and engine worker both run in this check.
     QTcpServer server;
@@ -35,7 +39,7 @@ int run(int argc, char **argv) {
             auto *socket = server.nextPendingConnection();
             auto request = std::make_shared<QByteArray>();
             QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, request, path] {
+            QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, request, &servedPath] {
                 *request += socket->readAll();
                 if (!request->contains("\r\n\r\n"))
                     return;
@@ -44,7 +48,7 @@ int run(int argc, char **argv) {
                     if (line.startsWith("filename: "))
                         name = QUrl::fromPercentEncoding(line.mid(10).trimmed());
                 ZipResource resource;
-                require(resource.open(path, name), "Fixture resource was not found");
+                require(resource.open(servedPath, name), "Fixture resource was not found");
                 QByteArray bytes;
                 while (resource.valid() && !resource.finished())
                     bytes += resource.next();
@@ -206,6 +210,67 @@ int run(int argc, char **argv) {
             require(copy.ready() && !copy.failure() && !copy.rememberRejection() && ready.rememberRejection(),
                     "Ready assignment retained a failure or changed another result");
         }
+        {
+            QTemporaryDir diagnostics;
+            require(diagnostics.isValid(), "Cannot create warning diagnostics directory");
+            initializeDiagnostics(diagnostics.path());
+            const auto warningPath = QFileInfo(path).dir().filePath("formatting-unsupported-writing.epub");
+            servedPath = warningPath;
+            auto warning = std::make_unique<ReaderSession>(test::readerFonts(), test::readerPlaceholder());
+            const auto openWarning = [&](ReaderSession &reader) {
+                auto access = std::make_shared<SourceLease>();
+                bool finished = false;
+                auto opening =
+                    request(warningPath, access, nativeResourceFactory(warningPath, server.serverPort(), access));
+                if (!reader.sourceHash().isEmpty()) {
+                    opening.saved = reader.state();
+                    opening.saved["fingerprint"] = QString::fromLatin1(reader.sourceHash());
+                }
+                reader.open(std::move(opening), [&](OpeningResult outcome) {
+                    require(outcome.ready(), qPrintable(openingMessage(outcome)));
+                    require(!outcome.rememberRejection(), "Readable imperfect book was remembered as rejected");
+                    finished = true;
+                    opened.quit();
+                });
+                opened.exec();
+                require(finished && reader.formattingWarning() && !reader.image().isNull(),
+                        "Readable imperfect book lost its warning or frame");
+            };
+            openWarning(*warning);
+            auto retainedWarning = warning->retained();
+            require(bool(retainedWarning) && retainedWarning->formattingWarning(),
+                    "Retention lost the formatting warning");
+            warning->cancelSource();
+            ReaderSession::drain([&] {
+                opened.quit();
+            });
+            opened.exec();
+            warning.reset();
+            openWarning(*retainedWarning);
+            QFile log(diagnostics.path() + "/events.jsonl");
+            require(log.open(QIODevice::ReadOnly), "Cannot read formatting diagnostics");
+            int warnings = 0;
+            for (const auto &line : log.readAll().split('\n')) {
+                const auto entry = QJsonDocument::fromJson(line).object();
+                if (entry.value("event").toString() != QStringLiteral("opening-formatting-warning")) {
+                    continue;
+                }
+                require(entry.value("resource").toString().endsWith(".xhtml") &&
+                            entry.value("issue").toString().contains("writing") &&
+                            entry.value("excerpt").toString().contains("vertical-lr"),
+                        "Formatting warning log lost its cause, resource or excerpt");
+                require(entry.value("retained_book_hit").toBool() == (warnings == 1),
+                        "Retained warning log lost its origin");
+                ++warnings;
+            }
+            require(warnings == 2, "Expected initial and retained formatting warning diagnostics");
+            retainedWarning->cancelSource();
+            ReaderSession::drain([&] {
+                opened.quit();
+            });
+            opened.exec();
+            servedPath = path;
+        }
         lease = std::make_shared<SourceLease>();
         session->open({path,
                        path,
@@ -357,18 +422,22 @@ int run(int argc, char **argv) {
         renderReports.clear();
         rendered.exec();
         bool formatted = false;
+        int overall = 0;
         for (const auto &report : renderReports) {
             if (!report.active)
                 continue;
             require(report.revision == latestRender.revision && report.percent >= 0 && report.percent <= 100,
                     "Stale relayout progress reached the replacement job");
+            require(report.overallPercent() >= overall && report.overallPercent() <= 100,
+                    "Relayout progress moved backwards at a phase boundary");
+            overall = report.overallPercent();
             formatted |= report.stage == OpeningStage::Pages;
         }
         require(formatted && !session->renderProgress().active,
                 "Completed relayout lost formatting progress or kept its progress active");
         auto bionicSettings = session->state();
         const auto applyBionic = [&](const QString &mode) {
-            bionicSettings["bionic_reading"] = mode;
+            bionicSettings["bold_reading"] = mode;
             session->apply(bionicSettings);
         };
         applyBionic("bold");
@@ -897,6 +966,14 @@ int run(int argc, char **argv) {
                 if (!absolute->busy())
                     opened.quit();
             };
+            require(absolute->go(nonLinearPage - 1), "Cannot go before the non-linear section");
+            opened.exec();
+            require(absolute->nextPage() == nonLinearPage, "Default paging skipped a non-linear section");
+            require(absolute->turn(1), "Cannot turn into the non-linear section");
+            opened.exec();
+            require(absolute->page() == nonLinearPage, "Default turn skipped a non-linear section");
+            absolute->apply(kobalt::qt::object({{"hide_nonlinear_fragments", true}}));
+            opened.exec();
             require(absolute->go(0), "Cannot go to the first physical page");
             opened.exec();
             while (absolute->nextPage() <= nonLinearPage) {

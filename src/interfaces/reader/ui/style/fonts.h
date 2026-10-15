@@ -9,10 +9,16 @@ class AssetBundle;
 }
 
 namespace kobalt::ui {
-// Consume verified bytes on the GUI thread before constructing reader UI.
+// Consume verified bytes on the GUI thread before constructing reading controls.
 // The registration cache owns its data and temporary copies, so Qt never
 // needs the asset storage to remain mounted.
-bool initializeInterfaceFonts(const AssetBundle &assets);
+// `changed` reports replaced interface faces, which widgets drawn before
+// this call must apply again.
+bool initializeInterfaceFonts(const AssetBundle &assets, bool *changed = nullptr);
+// Registers only the interface faces, each checked against the asset
+// manifest, so the opening view draws in its own fonts before the whole
+// bundle is verified. Later openings reuse the registered faces.
+bool initializeOpeningFonts(const AssetBundle &assets);
 // Register bundled faces; never change Nickel's application font.
 QFont interfaceFont(int pixels = -1);
 QFont chromeFont(int pixels = -1);

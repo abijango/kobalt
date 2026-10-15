@@ -1,6 +1,7 @@
 #include "support/strings.h"
 #include "platform/nickel/common/native_publication.h"
 #include "platform/nickel/common/publication_source.h"
+#include "publication/native_resources.h"
 #include "platform/nickel/common/native_location.h"
 #include <QMap>
 #include <QVariant>
@@ -48,6 +49,13 @@ bool NativePublication::available() {
 NativePublication::NativePublication() = default;
 bool NativePublication::active() const {
     return source_ && source_->active();
+}
+ResourceFactory NativePublication::resources(std::shared_ptr<SourceLease> lease) const {
+    if (!source_) {
+        return {};
+    }
+    auto direct = source_->resources(lease);
+    return direct ? direct : nativeResourceFactory(path_, port_, std::move(lease));
 }
 NativePublication::~NativePublication() {
     close();

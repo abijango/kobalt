@@ -2,6 +2,7 @@
 #include "usb_removal.h"
 #include <QObject>
 #include <QPointer>
+#include <QTimer>
 #include <functional>
 
 namespace kobalt {
@@ -9,6 +10,7 @@ extern void (*nativeShowSleepView)(void *);
 extern void (*nativeHideSleepView)(void *);
 extern bool (*nativeCanSuspend)(void *);
 extern void (*nativeUsbConnect)(void *);
+extern void (*nativeUsbWorkflow)(void *);
 extern void (*nativeAboutUsbConnect)(void *);
 extern void (*nativePowerOff)(void *, bool);
 extern void (*nativeReboot)(void *);
@@ -21,6 +23,8 @@ public:
     explicit NativeLifecycle(QObject *parent);
     static bool powerAvailable();
     static bool suspended();
+    static bool sleepSaveAllowed();
+    static bool usbSaveAllowed();
     bool connected() const {
         return connected_;
     }
@@ -34,17 +38,18 @@ public:
         return usbPending || exported;
     }
     bool draining = false;
-    std::function<void()> sleep, sleepViewReady, wake, beforeWake, cancelWake;
+    bool usbPromptExpected() const {
+        return expectingUsbPrompt;
+    }
+    std::function<void()> sleep, sleepViewReady, wake, beforeWake, cancelWake, usbPrompt;
     static void finishSleepView();
-    // Hold suspend while a sleep-time native progress write is still running.
-    // A queued Hardcover update must not use this.
-    static void deferSuspend(bool defer);
     std::function<void(std::function<void()>)> prepareUsb;
     std::function<void(std::function<void()>)> prepareShutdown;
     static void disconnected();
     static bool canSuspend();
     static void beginUsb();
     static bool interceptUsb(QObject *manager);
+    static bool interceptUsbWorkflow(QObject *manager);
     enum class Shutdown { PowerOff, BatteryLow, Reboot };
     static bool interceptShutdown(QObject *manager, Shutdown mode);
 #ifndef KOBALT_READER_HARDWARE
@@ -54,17 +59,21 @@ public:
     bool testSleepCovered = false, testSleepViewReady = false;
 #endif
 private slots:
+    void usbPlugged();
     void aboutToSleep();
     void resumed();
     void processingDone();
     void unplugging();
 
 private:
+    bool expectingUsbPrompt = false;
+    bool savingBeforeSleep = false;
     bool connected_ = false, asleep = false, usbPending = false, exported = false, poweringOff = false;
-    bool suspendDeferred = false;
     bool storageReady = false, remounting = false;
-    QPointer<QObject> pendingGadget;
+    QPointer<QObject> pendingGadget, pendingWorkflow;
     void finishUsb();
+    void finishWake();
+    QTimer wakeRetry;
     quint64 generation = 0;
     UsbRemoval usbRemoval;
     bool removalPending = false;

@@ -1,5 +1,6 @@
 #include "support/qt_compat.h"
 #include "support/strings.h"
+#include "platform/nickel/common/native_database_wait.h"
 #include "platform/nickel/common/native_progress.h"
 #include "platform/nickel/common/native_location.h"
 #include <QDateTime>
@@ -198,6 +199,10 @@ bool NativeProgress::write(const ReadingProgress &expected, const QString &posit
     if (!timeOnly && (!native.validLocation(&location) || native.teng(&location) != position))
         return fail(strings::get("error.nickel_rejected_the_exact_reading_position"));
     const auto db = native.dbName(native.device());
+    NativeDatabaseWait wait(native.connection(db, true), true);
+    if (!wait.ready()) {
+        return fail(strings::get("error.nickel_database_is_busy_local_position_was_retained"));
+    }
     // Nickel starts BEGIN IMMEDIATE and refuses a nested transaction. Never
     // commit someone else's pending work. The lock covers comparison and save.
     if (!native.begin(db))

@@ -4,10 +4,15 @@
 #include "../style/theme.h"
 #include "../style/metrics.h"
 #include <QBoxLayout>
+#include <QEvent>
 #include <QPushButton>
 #include <functional>
 
 namespace kobalt::ui {
+inline bool isHoverEvent(const QEvent *event) {
+    return event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverLeave ||
+           event->type() == QEvent::HoverMove;
+}
 class Button : public QPushButton {
 public:
     using QPushButton::QPushButton;
@@ -20,14 +25,28 @@ public:
         return hasConfiguredIcon ? &configuredIcon : nullptr;
     }
     void refreshIcon();
+    void setIconLabelGap(int pixels) {
+        if (iconLabelGap == pixels) {
+            return;
+        }
+        iconLabelGap = pixels;
+        update();
+    }
 
 protected:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void initStyleOption(QStyleOptionButton *option) const override;
+#else
+    void initStyleOption(QStyleOptionButton *option) const;
+#endif
+    bool event(QEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
     ButtonPaintMode mode = ButtonPaintMode::Native;
     ButtonIcon configuredIcon;
+    int iconLabelGap = 0;
     bool hasConfiguredIcon = false, hasIconTheme = false, iconDark = false;
 };
 

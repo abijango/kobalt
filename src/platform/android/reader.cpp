@@ -4,7 +4,7 @@
 #include "interfaces/opening_message.h"
 #include "reading/reading_book.h"
 #include "publication/native_resources.h"
-#include "publication/native_archive.h"
+#include "publication/local_resources.h"
 #include <QDir>
 #include <QBuffer>
 #include <QElapsedTimer>
@@ -59,10 +59,8 @@ void ReaderController::begin(const QString &path, QSize pixels) {
     phase = Phase::Opening;
     current = path;
     lease = std::make_shared<SourceLease>();
-    server = std::make_unique<native::ResourceServer>();
-    if (!server->open(path, [path] {
-            return native::openPlainArchive(path);
-        })) {
+    source = native::openLocalPublication(path);
+    if (!source) {
         emit failed(tr("This file could not be opened as an unprotected EPUB."));
         retire();
         return;
@@ -84,20 +82,13 @@ void ReaderController::begin(const QString &path, QSize pixels) {
     kobalt::appearance::applyFontDefault(saved, settings);
     saved["dark_mode"] = settings.value("dark_mode").toBool(false);
     saved["smooth_images"] = settings.value("smooth_images").toBool(true);
-    saved["bionic_reading"] = settings.value("bionic_reading").toString("off");
+    saved["bold_reading"] = settings.value("bold_reading").toString("off");
     orientation.configure(settings);
     const auto viewport = readerInterface().readingViewport(pixels, settings);
     opening = std::make_unique<ReaderSession>(fonts, placeholder);
     QPointer<ReaderController> guard(this);
     opening->open(
-        {identity,
-         path,
-         viewport,
-         saved,
-         {},
-         paths.layoutCache(),
-         lease,
-         nativeResourceFactory(path, server->port(), lease)},
+        {identity, path, viewport, saved, {}, paths.layoutCache(), lease, source->resources(lease)},
         [guard, identity, statePath, pixels](const OpeningResult &result) {
             if (!guard || guard->phase != Phase::Opening)
                 return;
@@ -182,7 +173,7 @@ void ReaderController::release() {
     ReaderSession::drain([guard] {
         if (!guard)
             return;
-        guard->server.reset();
+        guard->source.reset();
         releaseResourceConnections([guard] {
             if (!guard)
                 return;

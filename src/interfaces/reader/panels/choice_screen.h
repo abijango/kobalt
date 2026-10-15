@@ -5,6 +5,7 @@
 #include "interfaces/reader/ui/controls/paging.h"
 #include "interfaces/reader/ui/controls/panels.h"
 #include <QJsonObject>
+#include <QStringList>
 #include <functional>
 
 namespace kobalt {
@@ -56,6 +57,7 @@ public:
     std::function<void(const QString &)> selected;
     std::function<void()> back, changed;
     std::function<void(const QString &)> defaultRequested;
+    std::function<void(const QStringList &)> fontPageRequested;
     QJsonObject fontSamples() const;
     void setFontAppearance(const ui::SampleAppearance &appearance);
     explicit ChoiceScreen(QWidget *parent);
@@ -78,6 +80,7 @@ private:
     int pageCount() const;
     int itemIndex(int row) const;
     int pageForIndex(int index) const;
+    void requestFontPage();
     void layoutChoices();
     QVector<Choice> items;
     ui::SampleAppearance fontAppearance;
