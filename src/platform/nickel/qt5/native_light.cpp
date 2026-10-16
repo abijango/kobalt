@@ -42,6 +42,8 @@ struct Api {
     int (*maximum)(const void *) = symbol<decltype(maximum)>("_ZNK10FrontLight13maxBrightnessEv");
     void (*setBrightness)(const void *, int,
                           int) = symbol<decltype(setBrightness)>("_ZNK10FrontLight13setBrightnessEii");
+    void (*cancelBrightnessChanging)(void *) =
+        symbol<decltype(cancelBrightnessChanging)>("_ZN10FrontLight24cancelBrightnessChangingEv");
     void (*constructGesture)(void *, QObject *, void *) =
         symbol<decltype(constructGesture)>("_ZN21BrightnessEventFilterC1EP7QObjectP23BrightnessEventDelegate");
     void (*finishGesture)(void *) = symbol<decltype(finishGesture)>("_ZN21BrightnessEventFilter13finishGestureEv");
@@ -52,11 +54,16 @@ struct Api {
     bool archiveAvailable = native::publicationSource().available();
     bool gestureValid() const {
         return archiveAvailable && device && supports && constructLight && brightness && maximum && setBrightness &&
-               constructGesture && finishGesture;
+               cancelBrightnessChanging && constructGesture && finishGesture;
     }
     bool valid() const {
         return gestureValid();
     }
+    bool (*sensor)(const void *) = symbol<decltype(sensor)>("_ZNK6Device21hasAmbientLightSensorEv");
+    bool (*ambientEnabled)(void *) =
+        symbol<decltype(ambientEnabled)>("_ZN13PowerSettings28getAmbientLightSensorEnabledEv");
+    void (*setAmbientEnabled)(void *, bool) =
+        symbol<decltype(setAmbientEnabled)>("_ZN13PowerSettings28setAmbientLightSensorEnabledEb");
     bool (*natural)(const void *) = symbol<decltype(natural)>("_ZNK6Device15hasNaturalLightEv");
     int (*temperature)(const void *) = symbol<decltype(temperature)>("_ZNK10FrontLight11temperatureEv");
     int (*minTemperature)(const void *) = symbol<decltype(minTemperature)>("_ZNK10FrontLight14minTemperatureEv");
@@ -73,6 +80,10 @@ struct Api {
     QTime (*bedtime)(void *) = symbol<decltype(bedtime)>("_ZN13PowerSettings7bedTimeEv");
     void (*setBedtime)(void *, QTime) = symbol<decltype(setBedtime)>("_ZN13PowerSettings10setBedTimeE5QTime");
     void (*saveTemperature)(void *, int) = symbol<decltype(saveTemperature)>("_ZN13PowerSettings15setColorSettingEi");
+    bool automaticBrightnessValid() const {
+        return valid() && sensor && ambientEnabled && setAmbientEnabled && constructSettings && destroySettings &&
+               powerVtable;
+    }
     bool warmthValid() const {
         return valid() && natural && temperature && minTemperature && maxTemperature && intervals && setTemperature &&
                constructSettings && destroySettings && powerVtable && automatic && setAutomatic && bedtime &&
@@ -218,8 +229,32 @@ bool NativeLight::beginGesture() {
     if (level < 0 || level > 100)
         return false;
     gestureStart = level;
+    gestureAutomatic = automaticBrightness();
     reportedGestureFailure = false;
     return true;
+}
+bool NativeLight::hasAutomaticBrightness() const {
+    return frontLight && api().automaticBrightnessValid() && api().sensor(api().device());
+}
+bool NativeLight::automaticBrightness() const {
+    if (!hasAutomaticBrightness()) {
+        return false;
+    }
+    PowerSettings settings;
+    return api().ambientEnabled(settings.get());
+}
+bool NativeLight::setAutomaticBrightness(bool enabled) {
+    if (!hasAutomaticBrightness()) {
+        return false;
+    }
+    {
+        PowerSettings settings;
+        api().setAmbientEnabled(settings.get(), enabled);
+    }
+    const bool saved = automaticBrightness() == enabled && stored("AmbientLightSensorEnabled", enabled);
+    diagnostic(saved ? "automatic-brightness-saved" : "automatic-brightness-save-failed",
+               kobalt::qt::object({{"enabled", enabled}}));
+    return saved;
 }
 bool NativeLight::hasWarmth() const {
     return frontLight && api().warmthValid() && api().natural(api().device()) && warmthMaximum() > warmthMinimum();
@@ -293,6 +328,13 @@ int NativeLight::brightness() const {
 int NativeLight::setGestureLevel(int percent) {
     if (!gesturing() || !frontLight)
         return -1;
+    if (automaticBrightness() && !setAutomaticBrightness(false)) {
+        return -1;
+    }
+    // An automatic brightness animation writes the shared channels after a
+    // direct setBrightness call. Stop it before applying manual input, as
+    // Nickel's brightness gesture does through FRONT_LIGHT_CUSTOM_EVENT.
+    api().cancelBrightnessChanging(frontLight);
     const int next = qBound(0, percent, 100);
     if (next != brightness())
         api().setBrightness(frontLight, next, 0);
@@ -309,6 +351,9 @@ void NativeLight::finishGesture(bool save) {
     const int original = std::exchange(gestureStart, -1);
     if (!save) {
         api().setBrightness(frontLight, original, 0);
+        if (gestureAutomatic && !automaticBrightness()) {
+            setAutomaticBrightness(true);
+        }
         return;
     }
     if (brightness() == original)

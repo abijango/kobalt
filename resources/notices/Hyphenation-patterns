@@ -31,6 +31,48 @@ From hyph-pt.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1987
 Portuguese_BR.pattern
 From the LibreOffice Brazilian Portuguese hyphenation dictionary 1.0.8 (https://github.com/LibreOffice/dictionaries, pt_BR). Copyright (C) 2008 - 2013 Raimundo Santos Moura. Licensed under the GNU LGPL version 3 and the Mozilla Public License. The LGPL version 3 text is included with Kobalt's Qt notices.
 
+Additional dictionaries are unchanged XML conversions from the pinned CREngine commit b05cf00791d2ba17c1f077fc69e7bd68cf780b6a. Original TeX notices are at https://github.com/hyphenation/tex-hyphen/tree/master/hyph-utf8/tex/generic/hyph-utf8/patterns/tex.
+
+Estonian.pattern
+From hyph-et.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 2004-2015 Enn Saar.
+MIT. License text below.
+
+Finnish.pattern
+From hyph-fi.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1986, 1988, 1989 Kauko Saarinen.
+Patterns may be freely distributed.
+
+Georgian.pattern
+From hyph-ka.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 2013 Levan Shoshiashvili.
+MIT. License text below.
+
+Hungarian.pattern
+From hyph-hu.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 2003 Bence Nagy.
+GNU LGPL 2.1, selected from the MPL 1.1 / GPL 2.0 / LGPL 2.1 options. The full text is in FriBidi-LGPL-2.1.
+
+Lithuanian.pattern
+From hyph-lt.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1992 Sigitas Tolušis and Yannis Haralambous; original patterns by Vytas Statulevičius.
+MIT. License text below.
+
+Latvian.pattern
+From hyph-lv.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 2004-2005 Janis Vilims.
+GNU LGPL 2.1, selected from the LGPL 2.1 / GPL 2 or later options. The full text is in FriBidi-LGPL-2.1.
+
+Polish.pattern
+From hyph-pl.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1987-1995 Hanna Kołodziejska, Bogusław Jackowski and Marek Ryćko; conversion and corrections by Artur Polaczyński.
+GNU LGPL, as stated in the converted pattern. No version is specified; Kobalt distributes it under LGPL 3. The full text is in Qt-LGPL-3.
+
+Slovak.pattern
+From hyph-sk.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1992 Jana Chlebíková.
+MIT. License text below.
+
+Slovenian.pattern
+From hyph-sl.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1990 Matjaž Vrečko.
+MIT, selected from the LPPL / MIT options. License text below.
+
+Ukrainian.pattern
+From hyph-uk.tex (https://github.com/hyphenation/tex-hyphen). Copyright (C) 1998-2001 Maksym Polyakov.
+MIT, selected from the MIT / LPPL options. License text below.
+
 MIT license
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:

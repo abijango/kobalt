@@ -11,6 +11,10 @@ struct LayoutCompatibility {
     qint64 bytes = 0;
     // A deadline or resource failure cannot establish a stable book verdict.
     bool transientFailure = false;
+    // The first issue found by the advisory inspector. Excerpts are bounded to
+    // 240 characters and refer only to publication resources, not host files.
+    QString issue = {}, resource = {}, excerpt = {};
+    qint64 line = 0, column = 0;
     const char *reasonKey() const;
     QString reason() const;
 };

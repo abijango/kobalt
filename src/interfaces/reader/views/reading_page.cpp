@@ -89,6 +89,9 @@ void ReadingPage::cancelHold() {
 void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
     if (revealedLinks == rectangles)
         return;
+    QRegion dirty;
+    for (const auto &outline : revealedOutlines)
+        dirty += outline;
     revealedLinks = rectangles;
     // Pad each link, then split the space where padded links meet so that
     // links on consecutive lines, as in a contents page, keep separate outlines.
@@ -116,7 +119,10 @@ void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
                 after.setTop(qMax(after.top(), middle + gap - gap / 2));
             }
         }
-    update();
+    for (const auto &outline : revealedOutlines)
+        dirty += outline;
+    if (!dirty.isEmpty())
+        update(dirty.translated(0, topHeight()));
 }
 
 void ReadingPage::mark(const QVector<QRect> &rectangles) {
@@ -173,10 +179,10 @@ void ReadingPage::refreshContent(bool reading, bool now) {
                                   reading && !geometryChanged && renderedPalette == colors.cacheKey() &&
                                       renderedBody.text("kobalt.animation_text_only") == "true" &&
                                       image.text("kobalt.animation_text_only") == "true");
-    QRect dirty = (preparedFrom && preparedFrom == renderedBody.cacheKey() && renderedBody.size() == image.size()
+    QRegion dirty((preparedFrom && preparedFrom == renderedBody.cacheKey() && renderedBody.size() == image.size()
                        ? preparedDamage
                        : kobalt::ui::imageDamage(renderedBody, image))
-                      .translated(0, topHeight());
+                      .translated(0, topHeight()));
     preparedFrom = 0;
     const auto oldRegions = pageRefreshRegions(renderedBody, true);
     const auto newRegions = pageRefreshRegions(image, true);
@@ -194,7 +200,7 @@ void ReadingPage::refreshContent(bool reading, bool now) {
         auto next = renderStrip(topHeight(), [this](QPainter &p) {
             paintHeader(p);
         });
-        dirty = dirty.united(kobalt::ui::imageDamage(headerPixels, next));
+        dirty += kobalt::ui::imageDamage(headerPixels, next);
         headerPixels = next;
         headerState = nextHeader;
     }
@@ -202,21 +208,24 @@ void ReadingPage::refreshContent(bool reading, bool now) {
         auto next = renderStrip(bottomHeight(), [this](QPainter &p) {
             paintFooter(p);
         });
-        dirty = dirty.united(kobalt::ui::imageDamage(footerPixels, next).translated(0, height() - bottomHeight()));
+        dirty += kobalt::ui::imageDamage(footerPixels, next).translated(0, height() - bottomHeight());
         footerPixels = next;
         footerState = nextFooter;
     }
     const QRect ribbon = bookmarked ? ribbonRect() : QRect();
     if (ribbon != renderedRibbon) {
-        dirty = dirty.united(ribbon).united(renderedRibbon);
+        dirty += ribbon;
+        dirty += renderedRibbon;
         renderedRibbon = ribbon;
     }
     renderedSize = size();
     renderedTop = topHeight();
     renderedBottom = bottomHeight();
     renderedPalette = colors.cacheKey();
-    // One widget and one bounding rectangle give Kobo Qt one submission.
-    // Keep unchanged pixel values inside it, including the chapter title.
+    // Keep separate UI strips separate. Page turns still use one rectangle
+    // for the existing turn waveform and animation path.
+    if (reading)
+        dirty = dirty.boundingRect();
     const int turn = std::exchange(animationDirection, 0);
     window()->setProperty("reader_page_turn", reading && !geometryChanged);
     window()->setProperty("reader_animation_direction", reading && !geometryChanged ? turn : 0);

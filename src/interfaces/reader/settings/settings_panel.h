@@ -42,7 +42,7 @@ public:
                         *animationOption = nullptr;
     ui::DescribedOption *edgeLightOption = nullptr, *denseGraphOption = nullptr, *pinStatsOption = nullptr,
                         *heavierTextOption = nullptr;
-    ui::DescribedOption *linkIndicatorOption = nullptr;
+    ui::DescribedOption *linkIndicatorOption = nullptr, *hideNonlinearOption = nullptr;
     ui::DescribedOption *hardcoverOption = nullptr;
     ui::DescribedOption *bionicOption = nullptr;
     ui::CaptionButton *refreshButton = nullptr, *resetDefaults = nullptr;

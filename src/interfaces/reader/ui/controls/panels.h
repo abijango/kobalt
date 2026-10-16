@@ -27,7 +27,7 @@ public:
         softEdges = value;
         update();
     }
-    // One-pixel rules in the divider color, drawn after the separators.
+    // Density-scaled rules in the divider color, drawn after the separators.
     void setDividers(Edges edges) {
         dividers = edges;
         update();
@@ -39,7 +39,7 @@ protected:
 private:
     Edges separators, dividers;
     bool softEdges = false;
-    int edgeWidth = 1;
+    int edgeWidth = 0; // Zero follows the current density; positive values are explicit widths.
 };
 
 class LightSwipeNotice final : public Panel {

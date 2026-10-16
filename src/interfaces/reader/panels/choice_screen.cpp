@@ -172,14 +172,16 @@ ChoiceScreen::ChoiceScreen(QWidget *parent) : kobalt::ui::Panel(parent), navigat
     fontClose = close;
     fontPager = new ui::PagerBar(this, "rrFontPager");
     connect(fontPager->previous, &QPushButton::clicked, this, [this] {
-        if (page > 0) {
-            --page;
+        if (pageCount() > 1) {
+            page = fontPager->turnTarget(-1);
+            requestFontPage();
             redraw();
         }
     });
     connect(fontPager->next, &QPushButton::clicked, this, [this] {
-        if (page + 1 < pageCount()) {
-            ++page;
+        if (pageCount() > 1) {
+            page = fontPager->turnTarget(1);
+            requestFontPage();
             redraw();
         }
     });
@@ -249,6 +251,8 @@ void ChoiceScreen::showChoices(const QString &heading, QVector<Choice> choices, 
     for (int i = 0; i < items.size(); ++i)
         if (!current.isEmpty() && items[i].value == current)
             page = pageForIndex(i);
+    if (mode == Mode::Fonts)
+        requestFontPage();
     redraw();
     for (auto *widget : findChildren<QWidget *>())
         widget->ensurePolished();
@@ -310,6 +314,18 @@ int ChoiceScreen::pageForIndex(int index) const {
         return 0;
     }
     return index / pageSize;
+}
+
+void ChoiceScreen::requestFontPage() {
+    if (!fontPageRequested || mode != Mode::Fonts || page < 0 || page >= fontPages.size())
+        return;
+    QStringList families;
+    for (const int index : fontPages[page]) {
+        const QString family = items[index].value.isEmpty() ? QStringLiteral("Libron") : items[index].value;
+        if (!families.contains(family))
+            families.append(family);
+    }
+    fontPageRequested(families);
 }
 
 void ChoiceScreen::layoutChoices() {
@@ -419,7 +435,7 @@ void ChoiceScreen::redrawFonts() {
     const int first = itemIndex(0);
     fontSection->setText(first < 0 ? QString() : items[first].section.toUpper());
     fontPager->setGeometry(0, height() - pager, width(), pager);
-    fontPager->setPage(page, pageCount());
+    fontPager->setPage(page, pageCount(), {}, true);
     fontPager->show();
     while (buttons.size() < pageSize) {
         const int row = buttons.size();
@@ -472,8 +488,9 @@ void ChoiceScreen::redrawFonts() {
         readerStyle(
             button,
             QString(
-                "QPushButton{min-height:0;padding:0;border:0;border-right:1px solid palette(light);border-bottom:1px solid palette(light);background:%1;}")
-                .arg(selectedItem ? "palette(window-text)" : "palette(window)"));
+                "QPushButton{min-height:0;padding:0;border:0;border-right:%2px solid palette(light);border-bottom:%2px solid palette(light);background:%1;}")
+                .arg(selectedItem ? "palette(window-text)" : "palette(window)")
+                .arg(m::control::border));
         const QFont labelFont = fontSample(item.value.isEmpty() ? QStringLiteral("Libron") : item.value);
         label->setFont(labelFont);
         fontCell->helpFont = labelFont;

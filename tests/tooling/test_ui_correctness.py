@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,9 @@ INVENTORY = ROOT / 'tests/native-ui/correctness_checklist.json'
 SOURCES = {'reader-window': 'tests/native-ui/reader_test.cpp',
            'reader-window-device': 'tests/native-ui/reader_test.cpp',
            'desktop-window': 'tests/desktop/window_test.cpp'}
+SHARDS = {'reader-window': {f'reader-window-{index}' for index in range(12)},
+          'desktop-window': {f'desktop-window-{index}' for index in range(8)} |
+                            {f'desktop-window-books-{index}' for index in range(5)}}
 
 
 def inventory():
@@ -40,6 +44,13 @@ def native_results(paths):
         for test in ET.parse(path).iter('testcase'):
             passed = not any(test.find(tag) is not None for tag in ('failure', 'error', 'skipped'))
             results[test.attrib['name']] = (passed, test.findtext('system-out', ''))
+    # The checklist names complete executables. All their registered groups
+    # must be present and pass before their combined slot evidence can count.
+    for name, shards in SHARDS.items():
+        observed = [results[shard] for shard in sorted(shards) if shard in results]
+        if observed:
+            results[name] = (len(observed) == len(shards) and all(passed for passed, _ in observed),
+                             '\n'.join(output for _, output in observed))
     return results
 
 
@@ -102,6 +113,43 @@ def report(results, manifest, gates):
 
 
 class CorrectnessInventoryTests(unittest.TestCase):
+    def shard_results(self, missing=None, failed=None):
+        document = ET.Element('testsuite')
+        for name, shards in SHARDS.items():
+            for shard in sorted(shards):
+                if shard == missing:
+                    continue
+                test = ET.SubElement(document, 'testcase', name=shard)
+                ET.SubElement(test, 'system-out').text = 'PASS : ReaderTest::' + shard + '()'
+                if shard == failed:
+                    ET.SubElement(test, 'failure')
+        device = ET.SubElement(document, 'testcase', name='reader-window-device')
+        ET.SubElement(device, 'system-out').text = 'device evidence'
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'native.xml'
+            ET.ElementTree(document).write(path)
+            return native_results([path])
+
+    def test_junit_combines_all_groups_and_keeps_device_evidence_separate(self):
+        results = self.shard_results()
+        for name, shards in SHARDS.items():
+            self.assertTrue(results[name][0])
+            for shard in shards:
+                self.assertIn(shard + '()', results[name][1])
+        self.assertEqual(results['reader-window-device'], (True, 'device evidence'))
+
+    def test_missing_or_failed_group_cannot_pass_complete_executable(self):
+        for name, shards in SHARDS.items():
+            shard = sorted(shards)[-1]
+            self.assertFalse(self.shard_results(missing=shard)[name][0])
+            self.assertFalse(self.shard_results(failed=shard)[name][0])
+
+    def test_evidence_groups_match_ctest_registration(self):
+        cmake = (ROOT / 'tests/CMakeLists.txt').read_text()
+        groups = dict(re.findall(r'foreach\(shard RANGE 0 (\d+)\)(.*?)endforeach\(\)', cmake, re.DOTALL))
+        for prefix, count in (('reader-window', 12), ('desktop-window', 8), ('desktop-window-books', 5)):
+            self.assertIn('add_test(NAME ' + prefix + '-${shard}', groups[str(count - 1)])
+
     def capture_fixture(self):
         shots = [dict(group=group, name=scene, theme=theme, ppi=ppi, binary_sha256='current')
                  for group in inventory()['required_captures']

@@ -227,9 +227,10 @@ int main(int argc, char **argv) {
                 const QByteArray body =
                     name == "huge.png"                                                                 ? png(8000, 8000)
                     : (name == "normal.png" || name == "deferred.png" || name.startsWith("metadata-")) ? normal
-                    : name == "malformed.xhtml"  ? QByteArray("<html><p>Broken</html>")
-                    : name == "unfinished.xhtml" ? QByteArray("<html><p>")
-                                                 : QByteArray("<html><p>Small text</p></html>");
+                    : (name == "malformed.xhtml" || name == "malformed.opf") ? QByteArray("<html><p>Broken</html>")
+                    : (name == "unfinished.xhtml" || name == "unfinished.opf")
+                        ? QByteArray("<html><p>")
+                        : QByteArray("<html><p>Small text</p></html>");
                 const auto total = name == "huge.png" ? 4 * 1024 * 1024 : body.size();
                 socket->write("HTTP/1.1 206 Partial Content\r\nContent-Length: " + QByteArray::number(total) +
                               "\r\nConnection: close\r\n\r\n");
@@ -310,17 +311,25 @@ int main(int argc, char **argv) {
         for (const QString name :
              {"denied.png", "redirect.png", "missing.bin", "duplicate.bin", "negative.bin", "overflow.bin",
               "chunked.bin", "compressed.bin", "oversized-header.bin", "truncated.bin", "truncated.xhtml",
-              "malformed.xhtml", "unfinished.xhtml", "bad-status.bin", "bad-crlf.bin"}) {
+              "malformed.opf", "unfinished.opf", "bad-status.bin", "bad-crlf.bin"}) {
             auto rejected = std::make_shared<std::atomic_bool>(false);
             auto denied = nativeResources({{name, 100}}, "/test.epub", port, cancelled, "sans-serif", rejected);
             require(denied->size(name) == -1 && !denied->error().isEmpty(), "Failed native response accepted");
-            require(rejected->load() == (name == "malformed.xhtml" || name == "unfinished.xhtml"),
+            require(rejected->load() == (name == "malformed.opf" || name == "unfinished.opf"),
                     "Resource transfer failure confused with malformed publication content");
         }
         auto empty = nativeResources({{"empty.bin", 0}}, "/test.epub", port, cancelled);
         require(empty->size("empty.bin") == 0 && empty->error().isEmpty(), "Empty native response rejected");
         auto fragmented = nativeResources({{"fragmented.bin", 3}}, "/test.epub", port, cancelled);
         require(fragmented->readBounded("fragmented.bin", 3) == "abc", "Fragmented native response was lost");
+        for (const auto &name : {"malformed.xhtml", "unfinished.xhtml"}) {
+            auto access = std::make_shared<SourceLease>();
+            auto rejected = std::make_shared<std::atomic_bool>(false);
+            auto content = nativeResourceFactory("/test.epub", port, access)({{name, 64}}, {}, rejected);
+            const auto bytes = content->readBounded(name, 100);
+            require(!bytes.isEmpty() && content->error().isEmpty() && !rejected->load(),
+                    "Recoverable chapter HTML did not reach the engine intact");
+        }
         auto oldLease = std::make_shared<SourceLease>();
         auto rebound = nativeResources({{"chapter.xhtml", 40}, {"fragmented.bin", 3}}, "/test.epub", port, oldLease);
         require(rebound->readBounded("chapter.xhtml", 100) == "<html><p>Small text</p></html>", "Initial lease failed");

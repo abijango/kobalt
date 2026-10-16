@@ -737,6 +737,13 @@ int main(int argc, char **argv) {
     kobalt::ReaderModel granular(kobalt::test::readerFonts());
     require(granular.open(bytes, QSize(600, 800), defaults.state(), &error), qPrintable(error));
     require(granular.fontSize() == 45 && granular.spacing() == 121, "Single-unit typography was not restored");
+    require(defaults.style(kobalt::halfPointPixels(80), 121), "Cannot select 40 point text");
+    const auto largeImage = hash(defaults.image(0));
+    require(defaults.style(kobalt::maximumFontPixels(), 121) && hash(defaults.image(0)) != largeImage,
+            "48 point text rendered at the same size as 40 point text");
+    require(granular.open(bytes, QSize(600, 800), defaults.state(), &error) &&
+                granular.fontSize() == kobalt::maximumFontPixels(),
+            "Maximum text size was lost on reopening");
     require(defaults.style(44, 120), "Cannot restore defaults after granular typography check");
     require(defaults.style(44, 120, "NV Bitter", 48) && hash(defaults.image(0)) != defaultImage,
             "Bundled Libron did not change rendered text from bundled NV Bitter");
@@ -1109,6 +1116,11 @@ int main(int argc, char **argv) {
                 require(fallback.goTo(chapters[0].position), "Cannot navigate to the selected chapter destination");
                 require(fallback.goTo(anchor), "Cannot restore the position after chapter navigation");
             }
+            if (heading.contains('\n')) {
+                require(fallback.platformPosition(positions, &error) == "c.xhtml" && error.isEmpty() &&
+                            fallback.position() == anchor,
+                        "Normalized heading prevented chapter-only native progress");
+            }
         }
     }
     kobalt::ReaderModel native(kobalt::test::readerFonts());
@@ -1327,7 +1339,7 @@ int main(int argc, char **argv) {
                 "The document cache identity omitted the compiled Kobalt version");
         // CREngine leaves books under 30 kB out of its cache.
         const qint64 cachedBytes = 1024 * 1024;
-        const auto settings = kobalt::qt::object({{"text_alignment", "left"}, {"bionic_reading", "off"}});
+        const auto settings = kobalt::qt::object({{"text_alignment", "left"}, {"bold_reading", "off"}});
         const auto opened = [&](kobalt::ReaderModel &target, const QByteArray &key, const QByteArray &rules,
                                 const QJsonObject &saved) {
             target.setDocumentCache(cacheDirectory, key, rules, cachedBytes);
@@ -1361,7 +1373,7 @@ int main(int argc, char **argv) {
         const int middle = parsed.pages() / 2;
         require(restored.goTo(parsed.pageStart(middle)) && restored.page() == middle,
                 "A parsed position did not resolve in the restored book");
-        const auto prefixSettings = kobalt::qt::object({{"text_alignment", "left"}, {"bionic_reading", "bold"}});
+        const auto prefixSettings = kobalt::qt::object({{"text_alignment", "left"}, {"bold_reading", "bold"}});
         kobalt::ReaderModel emphasized(model.fontInputs()), emphasizedAgain(model.fontInputs()),
             plainAgain(model.fontInputs());
         opened(emphasized, fingerprint, policy, prefixSettings);
@@ -1782,10 +1794,20 @@ int main(int argc, char **argv) {
         require(css.platformPosition(positions, &error) == location, "Unicode export changed the offset");
     }
     require(css.goTo("/body/DocFragment[2]/body/p[1]/text().4"), "Cannot select a node without an ID");
-    require(css.platformPosition(positions, &error).isEmpty() && !error.isEmpty(), "Missing ID was approximated");
+    const auto unlabelledAnchor = css.position();
+    require(css.platformPosition(positions, &error) == chapter2 && error.isEmpty() &&
+                css.position() == unlabelledAnchor,
+            "Missing source ID prevented chapter-only native progress or moved the local position");
     require(css.goTo("/body/DocFragment[2]/body/p[4]/text().1"), "Cannot select whitespace fixture");
-    require(css.platformPosition(positions, &error).isEmpty() && !error.isEmpty(),
-            "Normalized whitespace was exported as an exact source offset");
+    const auto normalizedAnchor = css.position();
+    require(css.platformPosition(positions, &error) == chapter2 && error.isEmpty() &&
+                css.position() == normalizedAnchor,
+            "Normalized whitespace prevented chapter-only progress or changed the local position");
+    require(css.goTo("/body/DocFragment[2]/body/p[6]/span[1]/span[1]/text().0"),
+            "Cannot select the duplicate-ID fixture");
+    const auto ambiguousAnchor = css.position();
+    require(css.platformPosition(positions, &error).isEmpty() && !error.isEmpty() && css.position() == ambiguousAnchor,
+            "Ambiguous source IDs were saved as a native position");
     const auto styledPage = css.image(0);
     int firstInk = styledPage.width();
     for (int y = 0; y < styledPage.height(); ++y)
@@ -1854,7 +1876,7 @@ int main(int argc, char **argv) {
                 "Independent variable weight and thickness were lost on reopening");
         require(variable.setThickness(0) && hash(variable.image(0)) == normal,
                 "Clearing variable thickness did not restore pixels");
-        require(!variable.setThickness(-1) && !variable.setThickness(9), "Thickness accepted an unsupported value");
+        require(!variable.setThickness(-1) && !variable.setThickness(13), "Thickness accepted an unsupported value");
         auto actual = fontMan->GetFont(32, alternateWeight, false, css_ff_serif,
                                        lString8(variableFace.family.toUtf8().constData()));
         require(actual->getWeight() == alternateWeight && actual->getSynthWeight() == 0,
@@ -1886,16 +1908,24 @@ int main(int argc, char **argv) {
     auto bold = fontMan->GetFont(32, 700, false, css_ff_serif, lString8("NV Bitter"));
     const auto regularWidth = regular->getTextWidth(U"Regular words", 13);
     const auto boldWidth = bold->getTextWidth(U"Bold words", 10);
-    require(css.setWeight(3), "Weight adjustment failed");
+    int thicknessLayoutCallbacks = 0;
+    require(css.applyAppearance(kobalt::qt::object({{"weight_steps", 3}}), {},
+                                [&](kobalt::OpeningStage stage, int) {
+                                    if (stage == kobalt::OpeningStage::Styles || stage == kobalt::OpeningStage::Pages) {
+                                        ++thicknessLayoutCallbacks;
+                                    }
+                                }),
+            "Weight adjustment failed");
+    require(thicknessLayoutCallbacks == 0, "Outline thickness recalculated styles or pagination");
     const auto weightedPage = hash(css.image(0));
     require(weightedPage != hash(styledPage) && css.weight() == 3, "Weight adjustment did not change pixels");
     require(reopened.open(styledBytes, QSize(1072, 1328), css.state(), &error), qPrintable(error));
     require(reopened.weight() == 3 && hash(reopened.image(0)) == weightedPage, "Weight lost on reopen");
     require(css.setWeight(0) && hash(css.image(0)) == hash(styledPage), "Zero weight did not restore original glyphs");
-    require(!css.setWeight(-1) && !css.setWeight(9) && css.weight() == 0, "Invalid weight changed the model");
+    require(!css.setWeight(-1) && !css.setWeight(13) && css.weight() == 0, "Invalid weight changed the model");
     require(hash(reopened.image(0)) == weightedPage, "Another model changed the saved font weight");
     quint64 previousInkSum = 0;
-    for (int step = 0; step <= 8; ++step) {
+    for (int step = 0; step <= 12; ++step) {
         require(css.setWeight(step), "Weight step failed");
         const auto image = css.image(0);
         quint64 ink = 0;
@@ -1905,6 +1935,9 @@ int main(int argc, char **argv) {
         require(ink > previousInkSum, "Increasing outline weight did not increase ink");
         previousInkSum = ink;
     }
+    require(reopened.open(styledBytes, QSize(1072, 1328), css.state(), &error) && reopened.thickness() == 12,
+            "Maximum thickness was lost on reopen");
+    require(reopened.setThickness(3), "Cannot restore the comparison model's thickness");
     require(css.setWeight(0) && hash(css.image(0)) == hash(styledPage), "Weight steps changed the original rendering");
     require(regular->getWeight() == 400 && bold->getWeight() == 700 &&
                 regular->getTextWidth(U"Regular words", 13) == regularWidth &&
@@ -1949,7 +1982,7 @@ int main(int argc, char **argv) {
     require(css.setWeight(4), "Cannot prepare saved thickness for Bionic reading");
     const auto priorWeightPage = hash(css.image(0));
     for (const auto *mode : {"bold"}) {
-        require(css.applyAppearance(kobalt::qt::object({{"bionic_reading", mode}})), "Cannot enable Bionic reading");
+        require(css.applyAppearance(kobalt::qt::object({{"bold_reading", mode}})), "Cannot enable Bionic reading");
         const auto emphasized = hash(css.image(0));
         kobalt::ReaderModel freshlyEmphasized(css.fontInputs());
         require(freshlyEmphasized.open(styledBytes, css.viewport(), css.state(), &error), qPrintable(error));
@@ -1970,19 +2003,19 @@ int main(int argc, char **argv) {
         css.releaseImages();
         require(hash(reopened.image(0)) == weightedPage && hash(css.image(0)) == emphasized,
                 "Alternating models contaminated font glyph caches");
-        require(css.applyAppearance(kobalt::qt::object({{"bionic_reading", "off"}})) &&
+        require(css.applyAppearance(kobalt::qt::object({{"bold_reading", "off"}})) &&
                     hash(css.image(0)) == priorWeightPage,
                 "Disabling Bionic reading did not restore thickness");
     }
-    require(!css.applyAppearance(kobalt::qt::object({{"bionic_reading", "invalid"}})),
+    require(!css.applyAppearance(kobalt::qt::object({{"bold_reading", "invalid"}})),
             "Invalid Bionic mode was accepted");
-    require(!css.applyAppearance(kobalt::qt::object({{"bionic_reading", "synthetic"}})),
+    require(!css.applyAppearance(kobalt::qt::object({{"bold_reading", "synthetic"}})),
             "Retired Bionic mode was accepted");
     auto legacyBionic = css.state();
-    legacyBionic["bionic_reading"] = QStringLiteral("synthetic");
+    legacyBionic["bold_reading"] = QStringLiteral("synthetic");
     kobalt::ReaderModel migratedBionic(css.fontInputs());
     require(migratedBionic.open(styledBytes, css.viewport(), legacyBionic, &error), qPrintable(error));
-    require(migratedBionic.state().value("bionic_reading").toString() == "bold",
+    require(migratedBionic.state().value("bold_reading").toString() == "bold",
             "Retired Bionic setting did not migrate to bold");
 
     require(css.setWeight(0) && hash(css.image(0)) == normalBionicPage, "Bionic reading changed normal rendering");
@@ -2005,7 +2038,7 @@ int main(int argc, char **argv) {
     require(codeModel.open(codeBook.finish(&error), QSize(1072, 1328), {}, &error), qPrintable(error));
     const auto codeImage = hash(codeModel.image(0));
     for (const auto *mode : {"bold"})
-        require(codeModel.applyAppearance(kobalt::qt::object({{"bionic_reading", mode}})) &&
+        require(codeModel.applyAppearance(kobalt::qt::object({{"bold_reading", mode}})) &&
                     hash(codeModel.image(0)) == codeImage,
                 "Bionic reading altered proportional code");
     kobalt::Publication nowrapBook;
@@ -2033,7 +2066,7 @@ int main(int argc, char **argv) {
     const auto nowrapAnchor = nowrapModel.position();
     for (const auto *mode : {"bold", "off", "bold", "off"}) {
         int formattingStarts = 0;
-        require(nowrapModel.applyAppearance(kobalt::qt::object({{"bionic_reading", mode}}), {},
+        require(nowrapModel.applyAppearance(kobalt::qt::object({{"bold_reading", mode}}), {},
                                             [&](kobalt::OpeningStage stage, int percent) {
                                                 require(stage != kobalt::OpeningStage::Text && percent >= 0 &&
                                                             percent <= 100,
@@ -2073,11 +2106,11 @@ int main(int argc, char **argv) {
     kobalt::ReaderModel inlineHeading(css.fontInputs());
     require(inlineHeading.open(inlineBook.finish(&error), QSize(1072, 1328), {}, &error), qPrintable(error));
     for (const auto &face : {QStringLiteral("Libron"), kobalt::test::headingReadingFace()}) {
-        require(inlineHeading.applyAppearance(kobalt::qt::object({{"font_face", face}, {"bionic_reading", "off"}})),
+        require(inlineHeading.applyAppearance(kobalt::qt::object({{"font_face", face}, {"bold_reading", "off"}})),
                 "Cannot select the inline-heading regression font");
         int normalHeight = 0;
         for (const auto *mode : {"off", "bold"}) {
-            require(inlineHeading.applyAppearance(kobalt::qt::object({{"bionic_reading", mode}})),
+            require(inlineHeading.applyAppearance(kobalt::qt::object({{"bold_reading", mode}})),
                     "Cannot test emphasized inline heading");
             const auto headings = inlineHeading.searchPage("One", 0).hits;
             require(!headings.isEmpty(), "Cannot find inline chapter number");

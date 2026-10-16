@@ -3,7 +3,7 @@
 #include "reading/reader_session.h"
 #include "interfaces/reader_window.h"
 #include "storage/reader_storage.h"
-#include "publication/resource_server.h"
+#include "publication/publication_endpoint.h"
 #include "host_progress.h"
 #include "platform/api/reader_host_services.h"
 #include <QPointer>
@@ -45,7 +45,7 @@ private:
     QString placeholder;
     std::unique_ptr<QOrientationSensor> fixtureSensor;
     ReaderOrientation orientation;
-    std::unique_ptr<native::ResourceServer> server;
+    std::unique_ptr<native::PublicationEndpoint> source;
     std::unique_ptr<ReaderSession> opening;
     QPointer<ReaderWindow> window_;
     QPointer<ReaderSession> session_;

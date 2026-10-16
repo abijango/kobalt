@@ -12,16 +12,168 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QTextBlock>
+#include <QTextBoundaryFinder>
 #include <QTextDocument>
+#include <QTextFragment>
 #include <QTextLayout>
 
 namespace kobalt::ui {
 namespace m = metrics;
+namespace {
+struct ExcerptLine {
+    QString text;
+    QVector<QPair<int, int>> bold, underline;
+    qreal top, height;
+    int ascent, advance;
+    Qt::LayoutDirection direction;
+};
+bool privateExcerptNeeded(const QTextDocument &document, const QFont &font) {
+    auto text = document.toPlainText();
+    text.remove(QChar::LineSeparator);
+    text.remove('\n');
+    return needsPrivateText(text, font);
+}
+QVector<QPair<int, int>> lineRanges(const QVector<QPair<int, int>> &ranges, int start, int length) {
+    QVector<QPair<int, int>> result;
+    for (const auto &range : ranges) {
+        const int first = qMax(start, range.first), last = qMin(start + length, range.first + range.second);
+        if (first < last) {
+            result.append({first - start, last - first});
+        }
+    }
+    return result;
+}
+QVector<ExcerptLine> privateExcerptLines(const QTextDocument &document, const QFont &font, int width) {
+    QVector<ExcerptLine> lines;
+    qreal top = 0;
+    for (auto block = document.begin(); block.isValid(); block = block.next()) {
+        const auto text = block.text();
+        const auto direction = text.isRightToLeft() ? Qt::RightToLeft : Qt::LeftToRight;
+        QVector<QPair<int, int>> bold, underline;
+        for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+            const auto value = fragment.fragment();
+            if (!value.isValid()) {
+                continue;
+            }
+            const QPair<int, int> range(value.position() - block.position(), value.length());
+            if (value.charFormat().fontWeight() >= QFont::Bold) {
+                bold.append(range);
+            }
+            if (value.charFormat().fontUnderline()) {
+                underline.append(range);
+            }
+        }
+        QTextBoundaryFinder graphemes(QTextBoundaryFinder::Grapheme, text);
+        QVector<int> ends;
+        for (int end = graphemes.toNextBoundary(); end >= 0; end = graphemes.toNextBoundary()) {
+            ends.append(end);
+        }
+        QTextBoundaryFinder breaks(QTextBoundaryFinder::Line, text);
+        int start = 0;
+        do {
+            const int separator = text.indexOf(QChar::LineSeparator, start);
+            const int limit = separator < 0 ? text.size() : separator;
+            int low = 0, high = ends.size() - 1, end = start;
+            while (low <= high) {
+                const int middle = low + (high - low) / 2, candidate = ends[middle];
+                if (candidate <= start) {
+                    low = middle + 1;
+                } else if (candidate > limit ||
+                           measurePrivateText(text.mid(start, candidate - start), font,
+                                              lineRanges(bold, start, candidate - start), PrivateTextEmphasis::FontFace,
+                                              direction) > qMax(1, width)) {
+                    high = middle - 1;
+                } else {
+                    end = candidate;
+                    low = middle + 1;
+                }
+            }
+            if (end == start && start < limit) {
+                graphemes.setPosition(start);
+                end = graphemes.toNextBoundary();
+            }
+            if (end < limit) {
+                breaks.setPosition(end);
+                const int wordEnd = breaks.isAtBoundary() ? end : breaks.toPreviousBoundary();
+                if (wordEnd > start) {
+                    end = wordEnd;
+                }
+            }
+            const int length = end - start;
+            const auto lineText = text.mid(start, length);
+            const auto lineBold = lineRanges(bold, start, length);
+            const auto measured = measurePrivateTextLayout(lineText.isEmpty() ? QStringLiteral("M") : lineText, font,
+                                                           lineBold, PrivateTextEmphasis::FontFace, direction);
+            const auto format = block.blockFormat();
+            qreal height = measured.lineHeight;
+            if (format.lineHeightType() == QTextBlockFormat::ProportionalHeight) {
+                height *= format.lineHeight() / 100.0;
+            }
+            lines.append({lineText, lineBold, lineRanges(underline, start, length), top, height, measured.lineAscent,
+                          lineText.isEmpty() ? 0 : measured.advance, direction});
+            top += height;
+            start = end;
+            if (start == separator) {
+                ++start;
+            } else {
+                while (start < limit && text.at(start).isSpace()) {
+                    ++start;
+                }
+            }
+        } while (start < text.size());
+    }
+    return lines;
+}
+}
+qreal excerptTextHeight(const QString &html, const QFont &font, int width) {
+    QTextDocument document;
+    document.setDefaultFont(font);
+    document.setDocumentMargin(0);
+    document.setHtml(html);
+    if (privateExcerptNeeded(document, font)) {
+        const auto lines = privateExcerptLines(document, font, width);
+        return lines.isEmpty() ? 0 : lines.last().top + lines.last().height;
+    }
+    document.setTextWidth(width);
+    return document.size().height();
+}
 void WholeLineLabel::paintEvent(QPaintEvent *) {
     QTextDocument document;
     document.setDefaultFont(font());
     document.setDocumentMargin(0);
     document.setHtml(text());
+    if (privateExcerptNeeded(document, font())) {
+        const auto lines = privateExcerptLines(document, font(), width());
+        qreal bottom = 0;
+        for (const auto &line : lines) {
+            if (line.top + line.height <= height()) {
+                bottom = line.top + line.height;
+            }
+        }
+        QPainter painter(this);
+        painter.setClipRect(rect());
+        if (alignment() & Qt::AlignVCenter) {
+            painter.translate(0, (height() - bottom) / 2);
+        }
+        for (const auto &line : lines) {
+            if (line.top + line.height > bottom) {
+                break;
+            }
+            auto rendered = renderPrivateText(line.text, font(), 0, line.bold, line.underline,
+                                              PrivateTextEmphasis::FontFace, line.direction);
+            if (rendered.image.isNull()) {
+                continue;
+            }
+            QPainter color(&rendered.image);
+            color.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            color.fillRect(rendered.image.rect(), palette().color(QPalette::WindowText));
+            color.end();
+            const int x = line.direction == Qt::RightToLeft ? width() - line.advance : 0;
+            painter.drawImage(QPointF(x + rendered.origin.x(), line.top + line.ascent + rendered.origin.y()),
+                              rendered.image);
+        }
+        return;
+    }
     document.setTextWidth(width());
     document.documentLayout()->documentSize();
     qreal bottom = 0;
@@ -105,7 +257,7 @@ void drawOpticalText(QPainter &painter, const QRectF &area, const QString &text,
         return;
     }
     const bool bold = appearance.bionic == "bold";
-    const int weight = bold ? 0 : qBound(0, appearance.weight, 8);
+    const int weight = bold ? 0 : qBound(0, appearance.weight, 12);
     if (!bold && !weight) {
         const auto label = painter.fontMetrics().elidedText(text, Qt::ElideRight, qMax(0, int(area.width())));
         const auto bounds = QFontMetricsF(painter.font()).tightBoundingRect(label);

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,63 @@ def bundled_png(qt):
 
 
 DEFAULT_CACHE = ROOT / '.cache/kobalt'
+
+
+def dependency_identity(qt, specs, text_only):
+    """Inputs that can change a host dependency's ABI or generated code."""
+    files = [Path(__file__).resolve(), ROOT / 'tools/build.py', ROOT / 'dependencies/crengine-patches.txt']
+    if not text_only:
+        files += [ROOT / 'dependencies/patches' / name for name in ENGINE_PATCHES]
+        png, header, _ = bundled_png(qt)
+        files += [png, header / 'png.h']
+        files += [qt / 'lib/cmake/Qt6/Qt6Config.cmake']
+    environment = {name: os.environ.get(name, '') for name in
+                   ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'SDKROOT',
+                    'MACOSX_DEPLOYMENT_TARGET', 'CMAKE_TOOLCHAIN_FILE')}
+    tools = {}
+    for name in ('cc', 'c++', 'cmake', 'ninja', 'make', 'pkg-config'):
+        variable = {'cc': 'CC', 'c++': 'CXX'}.get(name)
+        command = shlex.split(os.environ.get(variable, '') or name) if variable else [name]
+        executable = shutil.which(command[0])
+        if not executable:
+            raise ValueError('Required dependency build tool missing: ' + command[0])
+        command[0] = executable
+        tools[name] = [command, subprocess.check_output([*command, '--version'], text=True).splitlines()[0]]
+    return {'qt': str(qt), 'host': platform.platform(), 'text_only': text_only,
+            'sources': specs, 'environment': environment, 'tools': tools,
+            'files': {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}}
+
+
+def cached_dependencies(output, identity):
+    """Reuse only a complete build whose installed files still match their hashes."""
+    try:
+        record = json.loads((output / 'dependencies.json').read_text())
+        if not isinstance(record, dict) or not isinstance(record.get('files'), dict) or not isinstance(record.get('options'), list):
+            return None
+        if record['identity'] != identity or not record['files']:
+            return None
+        expected_mode = '-DKOBALT_TEST_ENGINE=' + ('OFF' if identity.get('text_only') else 'ON')
+        if not record['options'] or record['options'][0] != expected_mode or not all(isinstance(option, str) for option in record['options']):
+            return None
+        for name, expected in record['files'].items():
+            path = Path(name)
+            if path.is_absolute() or '..' in path.parts:
+                return None
+            if hashlib.sha256((output / path).read_bytes()).hexdigest() != expected:
+                return None
+        return record['options']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def record_dependencies(output, identity, options, extra=()):
+    files = [path for path in (output / 'deps').rglob('*') if path.is_file()]
+    files += list(extra)
+    record = {'identity': identity, 'options': options,
+              'files': {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in files}}
+    (output / 'dependencies.json').write_text(json.dumps(record, indent=2) + '\n')
+    return options
 
 
 def fetch_sources(names, specs, cache=DEFAULT_CACHE, offline=False):
@@ -116,6 +174,13 @@ def build_engine(qt, output, jobs, cache=DEFAULT_CACHE, offline=False, text_only
     specs = json.loads((ROOT / 'dependencies/manifest.json').read_text())
     names = ('freetype', 'harfbuzz', 'fribidi') if text_only else ENGINE_DEPENDENCIES
     sources = fetch_sources(names, specs, cache, offline)
+    identity = dependency_identity(qt, {name: specs[name] for name in names}, text_only)
+    identity['output'] = str(output.resolve())
+    identity['source_directories'] = {name: str(path) for name, path in sources.items()}
+    cached = cached_dependencies(output, identity)
+    if cached is not None:
+        print('Reusing verified host dependencies', flush=True)
+        return cached
     environment = os.environ.copy()
     environment['PKG_CONFIG_PATH'] = environment['PKG_CONFIG_LIBDIR'] = str(prefix / 'lib/pkgconfig')
     environment.pop('PKG_CONFIG_SYSROOT_DIR', None)
@@ -136,6 +201,10 @@ def build_engine(qt, output, jobs, cache=DEFAULT_CACHE, offline=False, text_only
 
     def dependency(name, source, *options, install=True):
         directory = output / name
+        # CMake reads compiler environment flags only on first configuration.
+        # A cache miss must discard both that configuration and its objects.
+        if directory.exists():
+            shutil.rmtree(directory)
         for command in (['cmake', '-S', source, '-B', directory, *common, *options],
                         ['cmake', '--build', directory, '--parallel', jobs],
                         ['cmake', '--install', directory] if install else None):
@@ -143,19 +212,27 @@ def build_engine(qt, output, jobs, cache=DEFAULT_CACHE, offline=False, text_only
                 subprocess.run([str(part) for part in command], env=environment, check=True)
         return directory
 
+    def autotools(name, source):
+        directory = output / name
+        # Make does not rebuild objects just because compiler flags changed.
+        if directory.exists():
+            shutil.rmtree(directory)
+        build_autotools(source, directory, prefix, jobs, environment=environment)
+
     png_options = ['-DFT_DISABLE_PNG=ON'] if text_only else ['-DFT_DISABLE_PNG=OFF', f'-DPNG_LIBRARY={png}', f'-DPNG_PNG_INCLUDE_DIR={png_include}']
     dependency('freetype-' + sources['freetype'].name, sources['freetype'], '-DFT_DISABLE_HARFBUZZ=ON', '-DFT_DISABLE_BZIP2=ON',
                '-DFT_DISABLE_BROTLI=ON', *png_options)
     dependency('harfbuzz-' + sources['harfbuzz'].name, sources['harfbuzz'], '-DHB_BUILD_UTILS=OFF', '-DHB_BUILD_SUBSET=OFF', '-DHB_BUILD_RASTER=OFF',
         '-DHB_BUILD_VECTOR=OFF', '-DHB_BUILD_GPU=OFF', '-DHB_HAVE_FREETYPE=ON')
-    build_autotools(sources['fribidi'], output / 'fribidi-autotools', prefix, jobs, environment=environment)
+    autotools('fribidi-autotools', sources['fribidi'])
     if text_only:
-        return ['-DKOBALT_TEST_ENGINE=OFF', f'-DKOBALT_TEST_DEPENDENCIES={prefix}', '-DKOBALT_TEST_PNG=']
+        return record_dependencies(output, identity,
+                                   ['-DKOBALT_TEST_ENGINE=OFF', f'-DKOBALT_TEST_DEPENDENCIES={prefix}', '-DKOBALT_TEST_PNG='])
     dependency('utf8proc', sources['utf8proc'], '-DUTF8PROC_ENABLE_TESTING=OFF')
     dependency('jpeg', sources['libjpeg-turbo'], '-DENABLE_SHARED=OFF', '-DENABLE_STATIC=ON',
                '-DWITH_TURBOJPEG=OFF', '-DWITH_TOOLS=OFF', '-DWITH_TESTS=OFF')
     dependency('xxhash', sources['xxhash'] / 'cmake_unofficial', '-DXXHASH_BUILD_XXHSUM=OFF')
-    build_autotools(sources['libunibreak'], output / 'libunibreak-autotools', prefix, jobs, environment=environment)
+    autotools('libunibreak-autotools', sources['libunibreak'])
     extensions = sources['koreader-base'] / 'thirdparty/lunasvg'
     svg = patched(sources['lunasvg'], [extensions / name for name in ('cmake_tweaks.patch', 'extended.patch', 'pkgconfig.patch')], output)
     dependency('lunasvg-build-' + svg.name.rsplit('-', 1)[-1], svg, f'-DXTENDED_DIR={extensions / "xtended"}',
@@ -170,9 +247,10 @@ def build_engine(qt, output, jobs, cache=DEFAULT_CACHE, offline=False, text_only
                               '-DHARFBUZZ=ON', '-DLIBPNG=ON', '-DLIBJPEG=ON', '-DGIF=ON', '-DLUNASVG=ON', '-DZLIB=ON', '-DUTF8PROC=ON',
                               '-DFRIBIDI=ON', '-DLIBUNIBREAK=ON', '-DMATHML=ON',
                               install=False)
-    return ['-DKOBALT_TEST_ENGINE=ON', f'-DCRENGINE_SOURCE={engine}', f'-DCRENGINE_BUILD={engine_build}',
+    options = ['-DKOBALT_TEST_ENGINE=ON', f'-DCRENGINE_SOURCE={engine}', f'-DCRENGINE_BUILD={engine_build}',
             f'-DKOBALT_TEST_DEPENDENCIES={prefix}', f'-DKOBALT_TEST_PNG={png}', f'-DKOBALT_TEST_PNG_INCLUDE={png_include}',
             f'-DKOBALT_TEST_VARIABLE_FONT_SOURCE={sources["harfbuzz"] / "test/subset/data/fonts/Fraunces.ttf"}']
+    return record_dependencies(output, identity, options, [engine_build / 'libcrengine.a', engine / '.kobalt-source'])
 
 
 def main():
@@ -181,6 +259,7 @@ def main():
                         'libpng; without it, the pinned Qt is built once into the output directory')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/tests' / HOST, help='build directory')
     parser.add_argument('--jobs', type=int, default=2, help='parallel compiler jobs (default: 2)')
+    parser.add_argument('--test-jobs', type=int, default=min(8, os.cpu_count() or 2), help='parallel tests (default: up to 8 host CPUs)')
     parser.add_argument('--offline', action='store_true', help='use cached fonts and source archives only')
     parser.add_argument('--cache', type=Path, default=DEFAULT_CACHE,
                         help='directory for verified source archives (default: .cache/kobalt)')
@@ -190,8 +269,8 @@ def main():
     parser.add_argument('--mini', action='store_true', help='test the mini Kobo asset bundle in a separate build directory')
     parser.add_argument('ctest', nargs='*', help='extra arguments for ctest, after --')
     args = parser.parse_args()
-    if args.jobs < 1:
-        parser.error('--jobs must be positive')
+    if args.jobs < 1 or args.test_jobs < 1:
+        parser.error('--jobs and --test-jobs must be positive')
     output = args.output.resolve()
     if args.qt and not (args.qt / 'lib/cmake/Qt6/Qt6Config.cmake').is_file():
         parser.error(f'No Qt 6 SDK at {args.qt}. See the testing section of docs/development.md.')
@@ -236,7 +315,7 @@ def main():
             coverage.mkdir(exist_ok=True)
             profiles = Path(tempfile.mkdtemp(prefix='run-', dir=coverage))
             environment['LLVM_PROFILE_FILE'] = str(profiles / '%m-%p.profraw')
-        result = subprocess.run(['ctest', '--test-dir', str(tests), '--output-on-failure', *args.ctest], env=environment)
+        result = subprocess.run(['ctest', '--test-dir', str(tests), '--output-on-failure', '--parallel', str(args.test_jobs), *args.ctest], env=environment)
         if args.coverage:
             from test_coverage import report
             metadata = dict(test_exit_code=result.returncode, ctest_arguments=args.ctest, host=HOST)

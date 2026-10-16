@@ -126,6 +126,16 @@ class BuildInputTest(unittest.TestCase):
             self.assertIn(str(patch_path), dependencies)
             self.assertIn(str(inventory), dependencies)
 
+    def test_release_version_change_invalidates_recorded_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            version = root / 'VERSION'
+            version.write_text('v1.0-beta.1\n')
+            source_state.record(root, source_state.source_state(root))
+            self.assertTrue(source_state.current(root, root))
+            version.write_text('v1.0-beta.2\n')
+            self.assertFalse(source_state.current(root, root))
+
     def test_icon_generator_edit_invalidates_recorded_build(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -136,6 +146,57 @@ class BuildInputTest(unittest.TestCase):
             self.assertTrue(source_state.current(root, root))
             generator.write_text('changed generator')
             self.assertFalse(source_state.current(root, root))
+
+
+class DeviceDependencyCacheTest(unittest.TestCase):
+    def test_sdk_source_pins_and_build_recipe_change_cache_identity(self):
+        selected = build.target('qt5')
+        specs = {'crengine': {'sha256': 'first source'}}
+        first = build.device_dependency_inputs(ROOT, selected, specs, 'first SDK')
+        self.assertNotEqual(first, build.device_dependency_inputs(ROOT, selected, specs, 'second SDK'))
+        self.assertNotEqual(first, build.device_dependency_inputs(ROOT, selected,
+                            {'crengine': {'sha256': 'second source'}}, 'first SDK'))
+        original = Path.read_bytes
+        def changed(path):
+            data = original(path)
+            return data + b'\n# changed recipe' if path == ROOT / 'tools/build.py' else data
+        with patch.object(Path, 'read_bytes', changed):
+            self.assertNotEqual(first, build.device_dependency_inputs(ROOT, selected, specs, 'first SDK'))
+
+    def test_reuse_requires_matching_sdk_inputs_and_intact_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library = root / 'deps/lib/libtext.a'
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b'installed library')
+            engine = root / 'engine/libcrengine.a'
+            engine.parent.mkdir()
+            engine.write_bytes(b'engine library')
+            header = engine.parent / 'crsetup.h'
+            header.write_text('engine configuration')
+            identity = {'image': 'immutable-first', 'recipes': 'first'}
+            build.record_device_dependencies(root, identity, engine)
+            self.assertTrue(build.device_dependencies_match(root, identity))
+            self.assertFalse(build.device_dependencies_match(root, dict(identity, image='immutable-second')))
+            self.assertFalse(build.device_dependencies_match(root, dict(identity, recipes='second')))
+            for output in (library, engine, header):
+                original = output.read_bytes()
+                output.write_bytes(b'damaged')
+                self.assertFalse(build.device_dependencies_match(root, identity))
+                output.unlink()
+                self.assertFalse(build.device_dependencies_match(root, identity))
+                output.write_bytes(original)
+            for record in ('null', '{', '{}', '{"identity":{},"files":{}}'):
+                (root / 'dependencies.json').write_text(record)
+                self.assertFalse(build.device_dependencies_match(root, identity))
+            self.assertFalse(build.device_dependencies_match(root, None))
+
+    def test_cache_record_cannot_read_outside_build_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ('../outside', '/outside'):
+                (root / 'dependencies.json').write_text(json.dumps({'identity': {}, 'files': {name: 'hash'}}))
+                self.assertFalse(build.device_dependencies_match(root, {}))
 
 
 class DependencyDownloadTest(unittest.TestCase):

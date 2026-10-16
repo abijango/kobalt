@@ -9,7 +9,7 @@ struct AppearanceLayout {
     QVBoxLayout *typeRows = nullptr, *pageRows = nullptr;
 };
 struct AppearancePanelInputs {
-    QString headerCaption, footerCaption;
+    QString headerSize = "small", footerSize = "small";
     bool sideButtons = false, reverseLandscapeButtons = false;
     bool automaticRotationAvailable = false, showClock = true;
     bool systemRotation = false;
@@ -22,8 +22,7 @@ public:
     ui::SettingSlider *opticalSizeSlider = nullptr, *sizeSlider = nullptr, *weightSlider = nullptr,
                       *variableWeightSlider = nullptr, *spacingSlider = nullptr, *marginSlider = nullptr,
                       *verticalMarginSlider = nullptr;
-    QVector<QPushButton *> alignmentButtons, hyphenButtons, rotationButtons;
+    QVector<QPushButton *> alignmentButtons, hyphenButtons, rotationButtons, headerSizeButtons, footerSizeButtons;
     QPushButton *autoRotateOption = nullptr, *clockOption = nullptr, *clockHideOption = nullptr;
-    ui::DropdownButton *headerTextSize = nullptr, *footerTextSize = nullptr;
 };
 }

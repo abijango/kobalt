@@ -37,9 +37,9 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/too
     --manifest "${CMAKE_CURRENT_BINARY_DIR}/asset-manifest.json" --version "${KOBALT_VERSION}"
     ${KOBALT_ASSET_OPTIONS}
     COMMAND_ERROR_IS_FATAL ANY)
-add_library(reader-fonts STATIC src/assets/bundled_fonts.cpp src/assets/assets.cpp)
+add_library(reader-fonts STATIC src/assets/bundled_fonts.cpp src/assets/assets.cpp src/assets/system_fonts.cpp)
 set_target_properties(reader-fonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(reader-fonts PUBLIC Qt${KOBALT_QT_MAJOR}::Gui)
+target_link_libraries(reader-fonts PUBLIC Qt${KOBALT_QT_MAJOR}::Gui PRIVATE z)
 include(cmake/ReaderComponents.cmake)
 kobalt_publication_library(reader-publication)
 
@@ -180,3 +180,12 @@ endforeach()
 add_executable(refresh-scope-check tests/nickel/refresh_scope.cpp ${KOBALT_REFRESH_SOURCE})
 target_link_libraries(refresh-scope-check PRIVATE Qt${KOBALT_QT_MAJOR}::Widgets ${CMAKE_DL_LIBS})
 target_compile_options(refresh-scope-check PRIVATE -Wall -Wextra -Werror "-iquote${KOBALT_ROOT}/src")
+
+option(KOBALT_WORD_COUNT_BENCHMARK "Build the word-count measurement program" OFF)
+if(KOBALT_WORD_COUNT_BENCHMARK)
+    add_executable(word-count-benchmark tests/model/word_count_benchmark.cpp)
+    target_link_libraries(word-count-benchmark PRIVATE reader-model)
+    target_compile_options(word-count-benchmark PRIVATE -Wall -Wextra -Werror
+        "-iquote${KOBALT_ROOT}/src" "-iquote${KOBALT_ROOT}/tests/support")
+    target_compile_definitions(word-count-benchmark PRIVATE KOBALT_VERSION="${KOBALT_VERSION}")
+endif()

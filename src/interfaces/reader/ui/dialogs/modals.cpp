@@ -244,6 +244,14 @@ void ModalOverlay::fitCard() {
     content->fitToWidth(qMin<int>(m::notice::cardWidth, qMax(1, width() - 2 * m::notice::sideClearance)));
     centerCard();
 }
+QRect ModalOverlay::progressUpdateRect(int percent, const QString &message) const {
+    if (!loadingProgress || !isVisible() || !loadingProgress->isVisible() ||
+        loadingProgress->value() == qBound(0, percent, 100) ||
+        (!message.isEmpty() && loadingMessage->text() != message)) {
+        return {};
+    }
+    return QRect(loadingProgress->mapTo(window(), QPoint()), loadingProgress->size());
+}
 void ModalOverlay::setDelayedProgress(bool active, qint64 elapsedMilliseconds, int percent, const QString &message) {
     if (!loadingProgress) {
         loadingMessage = content->findChild<QLabel *>("rrUpdatingText");
@@ -258,16 +266,32 @@ void ModalOverlay::setDelayedProgress(bool active, qint64 elapsedMilliseconds, i
         setProperty("reader_standard_modal", true);
     }
     const bool showBar = active && elapsedMilliseconds >= 1000;
+    const bool wasVisible = isVisible();
     const bool changed =
         loadingProgress->isHidden() == showBar || (!message.isEmpty() && loadingMessage->text() != message);
     if (!message.isEmpty())
         loadingMessage->setText(message);
-    loadingProgress->setValue(active ? qBound(0, percent, 100) : 0);
+    // Hide before resetting. QProgressBar::setValue can paint synchronously.
+    if (!showBar) {
+        hide();
+        loadingProgress->hide();
+    }
+    const int value = active ? qBound(0, percent, 100) : 0;
+    if (loadingProgress->value() != value) {
+        const bool updates = loadingProgress->updatesEnabled();
+        if (updates) {
+            loadingProgress->setUpdatesEnabled(false);
+        }
+        loadingProgress->setValue(value);
+        if (updates) {
+            loadingProgress->setUpdatesEnabled(true);
+        }
+    }
     loadingProgress->setVisible(showBar);
     if (changed)
         fitCard();
     setVisible(showBar);
-    if (isVisible())
+    if (isVisible() && !wasVisible)
         raise();
 }
 void ModalOverlay::resizeEvent(QResizeEvent *) {

@@ -28,6 +28,7 @@ struct ReadingFont {
 struct FontSources {
     QStringList bundled;
     QString systemDirectory, sideloadDirectory, removableRoot;
+    QStringList systemFiles = {};
     bool operator==(const FontSources &other) const;
 };
 struct EngineFontInputs {
@@ -39,6 +40,9 @@ struct EngineFontInputs {
 // Each source owns all styles of a family. Lower-priority copies are ignored.
 // Empty directories disable discovery for that source.
 QVector<ReadingFont> discoverReadingFonts(const FontSources &sources);
+// Plain font files in the directory and up to two folder levels below it.
+// Kobo's wrapped fonts are skipped. An empty directory returns no files.
+QStringList sideloadedFontFiles(const QString &directory);
 inline QString fontDisplayName(const QString &family) {
     return family.startsWith("NV ") ? family.mid(3) : family;
 }

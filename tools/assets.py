@@ -23,8 +23,10 @@ FALLBACK_FONTS = ('NotoSerif-Regular.ttf', 'NotoSansMath-Regular.ttf', 'NotoSeri
 # Hyphenation dictionaries from the pinned engine. Other languages keep the
 # engine's algorithmic hyphenation.
 HYPHENATION = (
-    'Dutch.pattern', 'English_GB.pattern', 'English_US.pattern', 'French.pattern', 'German.pattern',
-    'Italian.pattern', 'Portuguese.pattern', 'Portuguese_BR.pattern', 'Spanish.pattern',
+    'Dutch.pattern', 'English_GB.pattern', 'English_US.pattern', 'Estonian.pattern', 'Finnish.pattern',
+    'French.pattern', 'Georgian.pattern', 'German.pattern', 'Hungarian.pattern', 'Italian.pattern',
+    'Latvian.pattern', 'Lithuanian.pattern', 'Polish.pattern', 'Portuguese.pattern', 'Portuguese_BR.pattern',
+    'Slovak.pattern', 'Slovenian.pattern', 'Spanish.pattern', 'Ukrainian.pattern',
 )
 # Installed asset folders that the reader accepts.
 FOLDERS = ('fonts/', 'hyph/')

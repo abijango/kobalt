@@ -7,7 +7,7 @@
 #include "reading/reading_book.h"
 #include "reading/appearance_settings.h"
 #include "publication/native_resources.h"
-#include "publication/native_archive.h"
+#include "publication/local_resources.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QTimer>
@@ -28,13 +28,10 @@ void ReaderHost::open(const QString &path, QSize nativeSize) {
     }
     phase = Phase::Opening;
     lease = std::make_shared<SourceLease>();
-    server = std::make_unique<native::ResourceServer>();
-    if (!server->open(path, [path] {
-            return native::openPlainArchive(path);
-        })) {
-        server.reset();
+    source = native::openLocalPublication(path);
+    if (!source) {
         phase = Phase::Idle;
-        emit failed("The public EPUB resource server could not open this file.");
+        emit failed("The local EPUB resource reader could not open this file.");
         return;
     }
     const QString identity = QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toString();
@@ -47,14 +44,13 @@ void ReaderHost::open(const QString &path, QSize nativeSize) {
     appearance::applyFontDefault(saved, settings);
     saved["dark_mode"] = settings.value("dark_mode").toBool(false);
     saved["smooth_images"] = settings.value("smooth_images").toBool(true);
-    saved["bionic_reading"] = settings.value("bionic_reading").toString("off");
+    saved["bold_reading"] = settings.value("bold_reading").toString("off");
     orientation.configure(settings);
     const QSize viewport = readerInterface().readingViewport(nativeSize, settings);
     opening = std::make_unique<ReaderSession>(fonts, placeholder);
     session_ = opening.get();
     QPointer<ReaderHost> guard(this);
-    OpenRequest request{identity, path, viewport, saved,
-                        {},       {},   lease,    nativeResourceFactory(path, server->port(), lease)};
+    OpenRequest request{identity, path, viewport, saved, {}, {}, lease, source->resources(lease)};
     request.positions = positions;
     opening->open(request, [guard, statePath, identity, nativeSize](const OpeningResult &outcome) {
         if (!guard || guard->phase != Phase::Opening)
@@ -121,7 +117,7 @@ void ReaderHost::retire() {
     ReaderSession::drain([guard] {
         if (!guard)
             return;
-        guard->server.reset();
+        guard->source.reset();
         releaseResourceConnections([guard] {
             if (!guard)
                 return;

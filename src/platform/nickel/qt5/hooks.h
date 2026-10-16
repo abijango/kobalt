@@ -1,5 +1,7 @@
 #pragma once
 class QWidget;
+class QObject;
+class QKeyEvent;
 
 // Internal contract between Nickel's hook entry point and its reader controller.
 // Other application targets do not include this header.
@@ -11,5 +13,6 @@ bool uninstallReader();
 #endif
 extern void (*nativeShowReader)(void *, const void *, const void *, void *, const void *);
 extern void (*nativeFinishInitialization)(void *);
+extern bool (*nativeHomeKeyFilter)(void *, QObject *, QKeyEvent *);
 extern void (*nativeContinueUsing)(void *), (*nativeUnplugged)(void *);
 }

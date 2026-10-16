@@ -376,6 +376,7 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
     anchor_.clear();
     contents_.clear();
     graph_.clear();
+    totalWords_ = -1;
     contentsIndex_ = {};
     graphIndex_ = {};
     nativeLocation_ = saved.value("imported_native_location").toString();
@@ -385,6 +386,7 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
     size_ = size;
     darkMode_ = saved.value("dark_mode").toBool(false);
     smoothImages_ = saved.value("smooth_images").toBool(true);
+    hideNonlinearFragments_ = saved.value("hide_nonlinear_fragments").toBool(false);
     pixels_ = qBound(minimumFontPixels(), saved.value("font_pixels").toInt(defaultFontPixels()), maximumFontPixels());
     spacing_ = qBound(100, saved.value("line_spacing").toInt(defaultLineSpacing), maximumLineSpacing);
     margin_ = qBound(0, saved.value("margin_pixels").toInt(defaultMarginPixels()), maximumMarginPixels());
@@ -396,8 +398,8 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
     hyphenation_ = hyphenation.isBool() ? (hyphenation.toBool() ? "auto" : "off") : hyphenation.toString("off");
     if (hyphenation_ != "auto" && hyphenation_ != "on" && hyphenation_ != "off")
         hyphenation_ = "off";
-    weight_ = qBound(0, saved.value("weight_steps").toInt(0), 8);
-    bionic_ = saved.value("bionic_reading").toString("off");
+    weight_ = qBound(0, saved.value("weight_steps").toInt(0), 12);
+    bionic_ = saved.value("bold_reading").toString("off");
     // Preserve enabled Bionic reading from the retired thickness mode.
     if (bionic_ == "synthetic")
         bionic_ = "bold";
@@ -424,6 +426,9 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
     opticalSize_ = normalizedOpticalSize(optical, savedOptical);
     activateFontParameters();
     engine_ = std::make_unique<LVDocView>(32, true);
+    // CREngine defaults to a 72-pixel cap. Use the same physical limits as the controls.
+    engine_->setMinFontSize(minimumFontPixels());
+    engine_->setMaxFontSize(maximumFontPixels());
     // Keep normal word spacing when fitting a line. CREngine otherwise allows
     // spaces to shrink to half width, including in left-aligned paragraphs.
     auto properties = LVCreatePropsContainer();
@@ -464,7 +469,7 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
                           lString8(QString("|||||%1|||").arg(monospaceFontFace).toUtf8().constData()));
     engine_->propsApply(properties);
     engine_->setViewMode(DVM_PAGES, 1);
-    engine_->setDefaultFontFace(lString8((face_.isEmpty() ? defaultFace_ : face_).toUtf8().constData()));
+    engine_->setDefaultFontFace(lString8((face_.isEmpty() ? QString(defaultFontFace) : face_).toUtf8().constData()));
     engine_->setFontSize(pixels_);
     // CSS sets the line height; the engine must not multiply it again.
     engine_->setDefaultInterlineSpace(100);
@@ -543,8 +548,9 @@ int ReaderModel::turnTarget(int from, int delta) const {
     int page = from;
     for (int turns = qAbs(delta); turns > 0; --turns) {
         int next = page + step;
-        // Stay in the linear text or in the non-linear section already open.
-        while (next >= 0 && next < pages() && engine_->getPageFlow(next) != 0 && engine_->getPageFlow(next) != flow)
+        // When hiding, stay in the linear text or the non-linear section already open.
+        while (hideNonlinearFragments_ && next >= 0 && next < pages() && engine_->getPageFlow(next) != 0 &&
+               engine_->getPageFlow(next) != flow)
             next += step;
         if (next < 0 || next >= pages())
             break;
@@ -583,7 +589,7 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     const int topMargin = settings.value("top_margin_pixels").toInt(topMargin_);
     const int bottomMargin = settings.value("bottom_margin_pixels").toInt(bottomMargin_);
     const int weight = settings.value("weight_steps").toInt(weight_);
-    const auto bionic = settings.value("bionic_reading").toString(bionic_);
+    const auto bionic = settings.value("bold_reading").toString(bionic_);
     const auto face = settings.value("font_face").toString(face_);
     const auto defaultFace = settings.value("default_font_face").toString(defaultFace_);
     const auto axis = fontWeightAxis(readingFonts, face);
@@ -601,10 +607,11 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     const auto hyphenation = settings.value("hyphenation").toString(hyphenation_);
     const bool dark = settings.value("dark_mode").toBool(darkMode_);
     const bool smooth = settings.value("smooth_images").toBool(smoothImages_);
+    const bool hideNonlinear = settings.value("hide_nonlinear_fragments").toBool(hideNonlinearFragments_);
     if (!engine_ || pixels < minimumFontPixels() || pixels > maximumFontPixels() || spacing < 100 ||
         spacing > maximumLineSpacing || margin < 0 || margin > maximumMarginPixels() || topMargin < 0 ||
         topMargin > maximumMarginPixels() || bottomMargin < 0 || bottomMargin > maximumMarginPixels() || weight < 0 ||
-        weight > 8 || !validAlignment(alignment) ||
+        weight > 12 || !validAlignment(alignment) ||
         (hyphenation != "auto" && hyphenation != "on" && hyphenation != "off") ||
         (bionic != "off" && bionic != "bold") || (!face.isEmpty() && !fontFaces().contains(face)) ||
         !fontFaces().contains(defaultFace))
@@ -612,14 +619,14 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     if (size.width() < 320 || size.height() < 240)
         size = size_;
     const bool bionicChanged = bionic != bionic_;
-    // Rebuild italic overhangs from plain glyphs so live edits and reopening agree.
+    // Outline thickness changes pixels only. Keep the formatted page and its anchors.
     const bool thicknessChanged = weight != weight_;
-    const bool styled = thicknessChanged || bionicChanged || axisChanged || opticalChanged || pixels != pixels_ ||
-                        spacing != spacing_ || face != face_ || defaultFace != defaultFace_ || margin != margin_ ||
-                        topMargin != topMargin_ || bottomMargin != bottomMargin_ || alignment != alignment_ ||
-                        hyphenation != hyphenation_;
+    const bool styled = bionicChanged || axisChanged || opticalChanged || pixels != pixels_ || spacing != spacing_ ||
+                        face != face_ || defaultFace != defaultFace_ || margin != margin_ || topMargin != topMargin_ ||
+                        bottomMargin != bottomMargin_ || alignment != alignment_ || hyphenation != hyphenation_;
     const bool resized = size != size_;
-    if (!styled && !resized && weight == weight_ && dark == darkMode_ && smooth == smoothImages_)
+    if (!styled && !resized && weight == weight_ && dark == darkMode_ && smooth == smoothImages_ &&
+        hideNonlinear == hideNonlinearFragments_)
         return true;
     const QString anchor = position();
     OpeningCallback callback(engine_, std::move(progress));
@@ -639,13 +646,14 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     darkMode_ = dark;
     activateFontParameters();
     smoothImages_ = smooth;
+    hideNonlinearFragments_ = hideNonlinear;
     if (styled) {
         setExtraFontWeight(0);
         auto properties = LVCreatePropsContainer();
         properties->setInt(PROP_FONT_BASE_WEIGHT, LVRendGetBaseFontWeight());
         engine_->propsApply(properties);
         engine_->requestRender();
-        engine_->setDefaultFontFace(lString8((face.isEmpty() ? defaultFace_ : face).toUtf8().constData()));
+        applyPublisherFontFallbacks();
         engine_->setPageMargins(lvRect(margin, topMargin, margin, bottomMargin));
         engine_->setFontSize(pixels);
         engine_->setDefaultInterlineSpace(100);
@@ -666,6 +674,11 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     cache_.clear();
     spareImage_ = {};
     damage_.clear();
+    if (thicknessChanged) {
+        engine_->clearImageCache();
+        // Rebuild drawn paragraphs without repaginating or changing anchors.
+        engine_->getDocument()->clearRendBlockCache();
+    }
     if (!styled && !resized)
         return true;
     // Applying a panel can change typography, hyphenation and the viewport together.
@@ -674,7 +687,7 @@ bool ReaderModel::applyAppearance(const QJsonObject &settings, QSize size, Openi
     return goTo(anchor);
 }
 bool ReaderModel::setThickness(int steps) {
-    if (steps < 0 || steps > 8)
+    if (steps < 0 || steps > 12)
         return false;
     return applyAppearance(kobalt::qt::object({{"weight_steps", steps}}));
 }
@@ -693,6 +706,17 @@ bool ReaderModel::setOpticalSize(double points) {
 }
 bool ReaderModel::setHyphenation(const QString &mode) {
     return applyAppearance(kobalt::qt::object({{"hyphenation", mode}}));
+}
+void ReaderModel::applyPublisherFontFallbacks() {
+    const bool useFallbacks = face_.isEmpty() && embeddedFontCount() == 0;
+    const auto sansFace = fontFaces().contains(publisherSansFontFace) ? publisherSansFontFace : "IBM Plex Sans";
+    const auto families = useFallbacks ? QString("|%1|%2|||%3|||").arg(defaultFontFace, sansFace, monospaceFontFace)
+                                       : QString("|||||%1|||").arg(monospaceFontFace);
+    auto properties = LVCreatePropsContainer();
+    properties->setString(PROP_FONT_FAMILY_FACES, lString8(families.toUtf8().constData()));
+    engine_->propsApply(properties);
+    const auto fallback = QString::fromLatin1(defaultFontFace);
+    engine_->setDefaultFontFace(lString8((face_.isEmpty() ? fallback : face_).toUtf8().constData()));
 }
 void ReaderModel::applyStyleSheet() {
     QString overrides = "html,body,DocFragment { margin:0 !important; padding:0 !important; }\n";
@@ -1065,6 +1089,9 @@ QString ReaderModel::textFontFace() const {
     return font.isNull() ? QString() : QString::fromUtf8(font->getTypeFace().c_str());
 }
 int ReaderModel::embeddedFontCount() const {
+    if (source_ && source_->embeddedFonts >= 0) {
+        return source_->embeddedFonts;
+    }
     if (!engine_ || !engine_->getDocument())
         return 0;
     auto *document = engine_->getDocument();
@@ -1094,10 +1121,11 @@ QJsonObject ReaderModel::state() const {
                                {"weight_steps", weight_},
                                {"font_weight", axisWeight_},
                                {"font_optical_size", opticalSize_},
-                               {"bionic_reading", bionic_},
+                               {"bold_reading", bionic_},
                                {"hyphenation", hyphenation_},
                                {"dark_mode", darkMode_},
                                {"smooth_images", smoothImages_},
+                               {"hide_nonlinear_fragments", hideNonlinearFragments_},
                                {"dom_version", domVersion_},
                                {"page_progression_rtl", engine_ && engine_->getDocument()->getProps()->getStringDef(
                                                                        "doc.page-progression-direction") == U"rtl"},

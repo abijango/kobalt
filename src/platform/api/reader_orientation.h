@@ -32,6 +32,9 @@ public:
     bool automaticAvailable() const {
         return !sensor.isNull();
     }
+    // Auto permits every sensor orientation. With Auto off, sensor devices
+    // still follow both orientations matching manual(), normalized to an axis.
+    // Devices without a sensor keep the exact manual orientation.
     bool automatic() const {
         return automaticRotation;
     }

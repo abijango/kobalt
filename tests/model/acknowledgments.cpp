@@ -84,7 +84,12 @@ int main(int argc, char **argv) {
                      label->text().startsWith(kobalt::strings::get(
                          "acknowledgments.kobalt_is_distributed_under_the_gnu_agpl_v3_without_any_warranty"));
     require(statement, "The license and warranty statement is not shown");
-    require(!button("rrAcknowledgmentsPrevious")->isEnabled(), "Previous enabled on first list page");
+    require(button("rrAcknowledgmentsPrevious")->isEnabled(), "Previous cannot wrap on first list page");
+    click("rrAcknowledgmentsPrevious");
+    const auto finalListPage = counter->text().split(" of ");
+    require(finalListPage.first() == finalListPage.last(), "Acknowledgments did not wrap backwards");
+    click("rrAcknowledgmentsNext");
+    require(counter->text().startsWith("1 of"), "Acknowledgments did not wrap forwards");
     click("rrAcknowledgmentsNext");
     require(counter->text().startsWith("2 of"), "Project list did not advance");
     click("rrAcknowledgmentsPrevious");

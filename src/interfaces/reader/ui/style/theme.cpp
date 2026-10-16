@@ -22,7 +22,8 @@ void paintButtonShape(QPainter &painter, const QRect &rect, const QColor &paper,
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(QPen(border, m::control::border));
     painter.setBrush(fill);
-    painter.drawRoundedRect(QRectF(rect).adjusted(.5, .5, -.5, -.5), m::control::buttonRadius,
+    const qreal inset = int(m::control::border) / 2.0;
+    painter.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset), m::control::buttonRadius,
                             m::control::buttonRadius);
     painter.restore();
 }
@@ -41,7 +42,7 @@ QColor noteColor(const QWidget *widget) {
     return QColor(darkTheme(widget) ? m::text::explanationDark : m::text::explanationLight);
 }
 void paintHeaderRules(QPainter &painter, const QWidget *view) {
-    painter.fillRect(0, m::chrome::statusHeight - 1, view->width(), m::control::border,
+    painter.fillRect(0, m::chrome::statusHeight - m::control::border, view->width(), m::control::border,
                      view->palette().color(QPalette::Mid));
     painter.fillRect(0, m::chrome::headerHeight - m::chrome::heavyRule, view->width(), m::chrome::heavyRule,
                      view->palette().color(QPalette::WindowText));

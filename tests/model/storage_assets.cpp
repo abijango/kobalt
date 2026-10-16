@@ -1,6 +1,7 @@
 #include "assets/assets.h"
 #include "storage/reader_storage.h"
 #include "storage/bookmark_store.h"
+#include "support/qt_compat.h"
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -113,6 +114,36 @@ int main(int argc, char **argv) {
     write(first + "/fonts/test.ttf", "first synthetic font");
     write(first + "/fonts/unlisted.ttf", "not in the verified manifest");
     expect(a.available() && a.fontData("unlisted.ttf").isEmpty(), "unlisted font bytes are never returned");
+    {
+        // The opening view reads its fonts before the whole bundle is checked.
+        // One damaged member must not hide the others, nor be returned itself.
+        const QString partial = temporary.path() + "/partial";
+        bundle(partial, "partial synthetic font");
+        auto manifest = QJsonDocument::fromJson([&] {
+                            QFile file(partial + "/manifest.json");
+                            expect(file.open(QIODevice::ReadOnly), "read partial manifest");
+                            return file.readAll();
+                        }())
+                            .object();
+        auto entries = manifest["files"].toArray();
+        entries.append(
+            qt::object({{"path", "fonts/damaged.ttf"}, {"size", 4}, {"sha256", QString(64, QLatin1Char('0'))}}));
+        manifest["files"] = entries;
+        write(partial + "/manifest.json", QJsonDocument(manifest).toJson());
+        write(partial + "/fonts/damaged.ttf", "damn");
+        write(partial + "/fonts/unlisted.ttf", "not in the manifest");
+        AssetBundle opening(partial, "asset-test");
+        expect(opening.manifestFontData("test.ttf") == "partial synthetic font",
+               "a listed font is read without verifying the whole bundle");
+        expect(opening.manifestFontData("damaged.ttf").isEmpty(), "a damaged listed font is rejected");
+        expect(opening.manifestFontData("unlisted.ttf").isEmpty(), "an unlisted font is rejected");
+        expect(opening.manifestFontData("../manifest.json").isEmpty(), "a path outside fonts is rejected");
+        expect(AssetBundle(partial, "wrong-version").manifestFontData("test.ttf").isEmpty(),
+               "a font from another version is rejected");
+        expect(!opening.available(), "the damaged member still fails full verification");
+        write(partial + "/fonts/test.ttf", "changed synthetic font");
+        expect(opening.manifestFontData("test.ttf").isEmpty(), "a changed font is rejected");
+    }
     expect(!AssetBundle(first, "wrong-version").available(),
            "version mismatch rejected independently of another bundle cache");
     expect(!AssetBundle({}, "asset-test").available(), "missing asset root does not select working directory");

@@ -1,4 +1,6 @@
 #pragma once
+#include "publication/resource_source.h"
+#include "publication/source_lease.h"
 #include <QPointer>
 #include <QString>
 #include <memory>
@@ -50,6 +52,7 @@ public:
         return port_;
     }
     bool active() const;
+    ResourceFactory resources(std::shared_ptr<SourceLease> lease) const;
 
 private:
     std::unique_ptr<native::PublicationEndpoint> source_;

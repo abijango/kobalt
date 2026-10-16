@@ -1,6 +1,8 @@
 #include "platform/api/kobo_refresh.h"
 #include "refresh.h"
 #include "platform/nickel/display/page_animation.h"
+#include "platform/nickel/display/keyboard_refresh.h"
+#include "platform/nickel/display/panel_damage.h"
 #include "platform/nickel/display/page_animation_hook.h"
 #include "platform/nickel/display/page_transition.h"
 #include "platform/nickel/display/refresh_policy.h"
@@ -13,6 +15,7 @@
 #include <QWidget>
 #include <QWindow>
 #include <QSettings>
+#include <algorithm>
 #include <dlfcn.h>
 #include <limits>
 
@@ -89,6 +92,7 @@ quint64 repairPolicy(bool dark, bool wide = true) {
 }
 quint64 pagePolicy = 0;
 bool previousDark = false;
+KeyboardRefreshCache keyboardPixels;
 bool readerOwnsScreen() {
     if (!qApp || QThread::currentThread() != qApp->thread() || !readerWindow || !readerWindow->isVisible())
         return false;
@@ -101,6 +105,7 @@ void setReaderRefreshWindow(QWidget *widget) {
         installPageAnimationHook();
 #endif
     cancelPageAnimation();
+    keyboardPixels.clear();
     readerWindow = widget;
     pageWidget.clear();
     pagePolicy = 0;
@@ -126,6 +131,7 @@ static void flushReaderUsing(QBackingStore *store, const QRegion &region, QWindo
         !region.isEmpty()) {
         // Nickel's sleep view replaces the page. One full GC16 refresh shows
         // it and clears the page, so the panel flashes once.
+        keyboardPixels.clear();
         const QRect screen(QPoint(), store->window()->size());
         submit(QRegion(screen), {{screen, gc16 | full}});
         return;
@@ -133,6 +139,7 @@ static void flushReaderUsing(QBackingStore *store, const QRegion &region, QWindo
     if (!readerOwnsScreen() || store->window() != readerWindow->windowHandle() ||
         (target && target != store->window()) || !offset.isNull() || region.isEmpty() ||
         !readerWindow->rect().contains(region.boundingRect())) {
+        keyboardPixels.clear();
         if (readerWindow)
             readerWindow->setProperty("reader_animation_direction", 0);
         submit(region, flags);
@@ -140,14 +147,19 @@ static void flushReaderUsing(QBackingStore *store, const QRegion &region, QWindo
     }
     const int direction = readerWindow->property("reader_animation_direction").toInt();
     readerWindow->setProperty("reader_animation_direction", 0);
+    const QRect progressUpdate = readerWindow->property("reader_progress_update").toRect();
+    readerWindow->setProperty("reader_progress_update", QRect());
     const bool dark = readerWindow->property("reader_dark").toBool();
     const bool pageTurn = readerWindow->property("reader_page_turn").toBool();
     readerWindow->setProperty("reader_page_turn", false);
     // The reader asks for one full flash to clear ghosting: after the menu
     // closes, and at some chapter starts. It replaces that turn's animation.
+    const bool controlsOpening = readerWindow->property("reader_controls_opening").toBool();
+    readerWindow->setProperty("reader_controls_opening", false);
     const bool flash = readerWindow->property("reader_full_flash").toBool();
     readerWindow->setProperty("reader_full_flash", false);
     if (flash || (dark && !previousDark)) {
+        keyboardPixels.clear();
         // Clear the entire panel, including UI remnants. Entering dark mode
         // always does this.
         previousDark = dark;
@@ -210,6 +222,38 @@ static void flushReaderUsing(QBackingStore *store, const QRegion &region, QWindo
             (mode != heuristic && mode != full && mode != partialMode))
             compatible = false;
     }
+    const bool ordinaryControls = std::all_of(policies.cbegin(), policies.cend(), [&](const auto &entry) {
+        return (entry.second & ~(heuristic | full | partialMode)) ==
+               (ordinaryPolicy(dark, wide) & ~(heuristic | full | partialMode));
+    });
+    if (controlsOpening && compatible && ordinaryControls && refreshBackend(readerWindow) == RefreshBackend::Mtk) {
+        keyboardPixels.clear();
+        const QRect screen = readerWindow->rect();
+        auto policy = ordinaryPolicy(dark, wide);
+        if (!dark && readerWindow->property("reader_plain_controls").toBool())
+            policy = (policy & ~(heuristic | full)) | partialMode;
+        submit(QRegion(screen), {{screen, policy}});
+        return;
+    }
+    const QRect keyboardBounds = readerWindow->property("reader_keyboard_bounds").toRect();
+    const bool keyboardPolicy =
+        compatible && ordinaryControls && std::all_of(policies.cbegin(), policies.cend(), [&](const auto &entry) {
+            return entry.second == policies[0].second;
+        });
+    if (keyboardPolicy) {
+        const bool keyboardOnly = std::all_of(policies.cbegin(), policies.cend(), [&](const auto &entry) {
+            return keyboardBounds.contains(entry.first);
+        });
+        if (keyboardPixels.unchanged(dynamic_cast<QImage *>(store->paintDevice()), region, keyboardBounds,
+                                     policies[0].second, keyboardOnly))
+            return;
+    } else {
+        keyboardPixels.clear();
+    }
+    const bool progressDamage = !progressUpdate.isEmpty() && progressUpdate.contains(region.boundingRect()) &&
+                                std::all_of(policies.cbegin(), policies.cend(), [&](const auto &entry) {
+                                    return progressUpdate.contains(entry.first);
+                                });
     auto completedFlush = [&](const QRegion &damage, const FlushFlags &chosen) {
         cancelPageAnimation();
         if (wide && direction && compatible && chosen.size() == 1 && chosen[0].second == ordinaryPolicy(dark, wide)) {
@@ -234,14 +278,105 @@ static void flushReaderUsing(QBackingStore *store, const QRegion &region, QWindo
                 return;
             }
         }
+        const bool plainControls = !dark && readerWindow->property("reader_plain_controls").toBool();
+        if (!dark && !pageTurn && !direction && progressDamage && refreshBackend(readerWindow) == RefreshBackend::Mtk &&
+            compatible && chosen.size() == 1 && progressUpdate.contains(damage.boundingRect()) &&
+            (chosen[0].second == ordinaryPolicy(false, wide) ||
+             chosen[0].second == ((ordinaryPolicy(false, wide) & ~full) | heuristic))) {
+            const quint64 policy = (chosen[0].second & ~(heuristic | full)) | partialMode;
+            submit(damage, {{chosen[0].first, policy}});
+            return;
+        }
+        if ((pageTurn || plainControls) && !direction && compatible &&
+            refreshBackend(readerWindow) == RefreshBackend::Mtk && !chosen.isEmpty() &&
+            std::all_of(chosen.cbegin(), chosen.cend(), [&](const auto &entry) {
+                return entry.second == ordinaryPolicy(dark, wide);
+            })) {
+            FlushFlags partial = chosen;
+            for (auto &entry : partial)
+                entry.second = (entry.second & ~(heuristic | full)) | partialMode;
+            submit(damage, partial);
+            return;
+        }
+        // Edits inside an open appearance panel change a slider row or a
+        // font sample. Partial mode updates only their changed pixels instead
+        // of flashing the whole rectangle. Showing or hiding the whole panel,
+        // and the page beside it, keep their policy.
+        const QRect controls = readerWindow->property("reader_partial_controls").toRect();
+        if (!dark && !pageTurn && !direction && compatible && !controls.isEmpty() &&
+            refreshBackend(readerWindow) == RefreshBackend::Mtk) {
+            FlushFlags partial = chosen;
+            bool changed = false;
+            for (auto &entry : partial) {
+                const bool text = entry.second == ordinaryPolicy(false, wide) ||
+                                  entry.second == ((ordinaryPolicy(false, wide) & ~full) | heuristic);
+                if (text && controls.contains(entry.first) && entry.first != controls) {
+                    entry.second = (entry.second & ~(heuristic | full)) | partialMode;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                submit(damage, partial);
+                return;
+            }
+        }
+        if (pageTurn && !direction && compatible && refreshBackend(readerWindow) != RefreshBackend::Mtk &&
+            chosen.size() == 1 && chosen[0].second == ordinaryPolicy(dark, wide)) {
+            // Older and unknown backends keep their reading policy over the whole screen.
+            const QRect screen = readerWindow->rect();
+            submit(QRegion(screen), {{screen, chosen[0].second}});
+            return;
+        }
         submit(damage, chosen);
     };
-    if (region.rectCount() > 1 && compatible) {
-        // Qt has finished painting every rectangle into this backing store.
+    QRegion policyCoverage;
+    bool uniform = compatible && (region.rectCount() > 1 || policies.size() > 1);
+    const QRect bounds = region.boundingRect();
+    if (uniform) {
+        for (const auto &entry : policies) {
+            uniform =
+                uniform && entry.second == policies[0].second && !entry.first.isEmpty() && bounds.contains(entry.first);
+            policyCoverage += entry.first;
+        }
+    }
+    if (uniform && region.subtracted(policyCoverage).isEmpty()) {
+        // Adjacent widget damage can form one QRegion rectangle while the
+        // flag table still has several. Qt has finished painting all of them.
         // Merge here, before MTK submits each rectangle separately.
-        const QRect bounds = region.boundingRect();
-        const auto policy = ordinaryPolicy(dark, wide);
-        completedFlush(QRegion(bounds), {{bounds, policy}});
+        const auto policy = policies[0].second == ((ordinaryPolicy(dark, wide) & ~full) | heuristic)
+                                ? ordinaryPolicy(dark, wide)
+                                : policies[0].second;
+        // Page transitions keep one rectangle for their existing refresh policy.
+        // UI damage keeps one rectangle per panel so unchanged gaps are not refreshed.
+        const QRect keyboard = readerWindow->property("reader_keyboard_bounds").toRect();
+        const bool keyboardDamage = !keyboard.isEmpty() && keyboard.contains(bounds);
+        QRegion damage;
+        FlushFlags selected;
+        if (pageTurn || direction || keyboardDamage || refreshBackend(readerWindow) != RefreshBackend::Mtk) {
+            damage = bounds;
+            selected.append({bounds, policy});
+        } else {
+            for (const auto &part : panelDamage(readerWindow, pageWidget, region)) {
+                damage += part;
+                selected.append({part, policy});
+            }
+        }
+        completedFlush(damage, selected);
+        return;
+    }
+    if (compatible && !pageTurn && !direction && refreshBackend(readerWindow) == RefreshBackend::Mtk &&
+        region.rectCount() > 1 && region.subtracted(policyCoverage).isEmpty()) {
+        // Qt can include a window-sized policy rectangle even when its damage
+        // has a gap. Submit each panel's painted region with policies clipped to it.
+        for (const auto &part : panelDamage(readerWindow, pageWidget, region)) {
+            FlushFlags selected;
+            for (const auto &entry : policies) {
+                const QRect clipped = entry.first.intersected(part);
+                if (!clipped.isEmpty() && !selected.contains({clipped, entry.second}))
+                    selected.append({clipped, entry.second});
+            }
+            completedFlush(QRegion(part), selected);
+        }
         return;
     }
     completedFlush(region, policies);

@@ -10,18 +10,19 @@ using namespace kobalt;
 int main() {
     // Appearance settings decide the layout. The list must stay complete, because a
     // missing key would let a retained layout survive a changed setting.
-    require(appearance::keys.size() == 16, "The appearance keys changed without this check");
+    require(appearance::keys.size() == 17, "The appearance keys changed without this check");
 
     const auto from = qt::object({{"font_pixels", 40},
                                   {"line_spacing", QJsonValue(QJsonValue::Null)},
                                   {"font_face", "Libron"},
                                   {"dark_mode", true},
+                                  {"hide_nonlinear_fragments", true},
                                   {"show_header", false}});
     auto to =
         qt::object({{"font_pixels", 30}, {"margin_pixels", 12}, {"hyphenation", "on"}, {"page_animations", true}});
     appearance::copy(to, from);
     require(to.value("font_pixels").toInt() == 40 && to.value("font_face").toString() == "Libron" &&
-                to.value("dark_mode").toBool(),
+                to.value("dark_mode").toBool() && to.value("hide_nonlinear_fragments").toBool(),
             "Copy lost an appearance value");
     // A null value stays null, and a key the source lacks is removed, so the
     // engine applies its own default instead of an old value.
@@ -41,11 +42,11 @@ int main() {
         require(copied.value(key).toInt() == 36, "Appearance copy lost a vertical margin");
     }
     auto bionic = from;
-    bionic["bionic_reading"] = QStringLiteral("bold");
+    bionic["bold_reading"] = QStringLiteral("bold");
     require(!appearance::same(bionic, from), "Bionic mode changes reused an old layout");
     auto bionicCopy = from;
     appearance::copy(bionicCopy, bionic);
-    require(bionicCopy.value("bionic_reading").toString() == "bold", "Appearance copy lost Bionic mode");
+    require(bionicCopy.value("bold_reading").toString() == "bold", "Appearance copy lost Bionic mode");
     auto optical = from;
     optical["font_optical_size"] = 12;
     require(!appearance::same(optical, from), "Optical size reused an old layout");
@@ -100,22 +101,49 @@ int main() {
     newDefault["default_font_face"] = QStringLiteral("NV Ancizar Serif");
     require(!appearance::same(newDefault, from), "Default changes did not invalidate the layout");
 
+    auto hidden = from;
+    hidden["hide_nonlinear_fragments"] = false;
+    require(!appearance::same(hidden, from), "Non-linear paging changes did not invalidate the retained model");
+
     const auto global = qt::object(
-        {{"show_clock", true}, {"header_text_size", "small"}, {"bionic_reading", "bold"}, {"page_animations", true}});
-    const auto book = qt::object({{"show_clock", false}, {"header_text_size", "large"}, {"bionic_reading", "off"}});
+        {{"show_clock", true}, {"header_text_size", "small"}, {"bold_reading", "bold"}, {"page_animations", true}});
+    const auto book = qt::object({{"show_clock", false}, {"header_text_size", "large"}, {"bold_reading", "off"}});
     const auto preferences = appearance::readerPreferences(global, book);
     require(!preferences["show_clock"].toBool() && preferences["header_text_size"].toString() == "large",
             "Book layout did not override legacy global settings");
-    require(preferences["bionic_reading"].toString() == "bold", "Book state overrode global Bionic reading");
+    require(preferences["bold_reading"].toString() == "bold", "Book state overrode global Bionic reading");
     const auto persistedGlobal = appearance::globalPreferences(preferences);
     require(!persistedGlobal.contains("show_clock") && !persistedGlobal.contains("header_text_size") &&
                 persistedGlobal["page_animations"].toBool(),
             "Global save mixed book layout with overflow settings");
+    for (const auto *mode : {"bold", "off", "synthetic"}) {
+        const auto legacy = qt::object({{"bionic_reading", mode}, {"page_animations", true}});
+        const auto migrated = appearance::readerPreferences(legacy, book);
+        require(migrated.value("bold_reading").toString() == mode && !migrated.contains("bionic_reading") &&
+                    migrated.value("page_animations").toBool(),
+                "Legacy global Bionic reading did not migrate to Bold reading");
+        require(appearance::readerPreferences(migrated, book) == migrated,
+                "Bold reading migration changed an existing choice");
+        const auto persisted = appearance::globalPreferences(migrated);
+        require(persisted.value("bold_reading").toString() == mode && !persisted.contains("bionic_reading"),
+                "Global save lost migrated Bold reading or kept the legacy key");
+    }
+    for (const auto &value : {QJsonValue(QStringLiteral("bold")), QJsonValue(QStringLiteral("off")),
+                              QJsonValue(QJsonValue::Null), QJsonValue(QStringLiteral("invalid"))}) {
+        const auto legacyMode = value.toString() == "bold" ? "off" : "bold";
+        const auto existing = qt::object({{"bold_reading", value}, {"bionic_reading", legacyMode}});
+        const auto migrated = appearance::readerPreferences(existing, book);
+        require(migrated.value("bold_reading") == value && !migrated.contains("bionic_reading"),
+                "Legacy Bionic reading replaced an explicit Bold reading choice");
+    }
+    require(!appearance::readerPreferences({}, qt::object({{"bionic_reading", "bold"}})).contains("bold_reading") &&
+                !appearance::readerPreferences({}, {}).contains("bold_reading"),
+            "A book-specific legacy setting or a fresh profile enabled global Bold reading");
     for (const auto density : {212, 227, 265, 300}) {
         readingPpi.store(density);
         require(defaultFontPixels() == halfPointPixels(22), "Default text size is not 11 points");
-        require(minimumFontPixels() == halfPointPixels(14) && maximumFontPixels() == halfPointPixels(40),
-                "Engine size limits do not match the 7 to 20 point controls");
+        require(minimumFontPixels() == halfPointPixels(14) && maximumFontPixels() == halfPointPixels(96),
+                "Engine size limits do not match the 7 to 48 point controls");
     }
     readingPpi.store(300);
     const auto defaults = appearance::typographyDefaults();
@@ -129,7 +157,7 @@ int main() {
                 defaults.value("font_weight").toInt() == 450 && defaults.value("hyphenation").toString() == "off",
             "Typography defaults changed");
     require(!defaults.contains("dark_mode") && !defaults.contains("smooth_images") &&
-                !defaults.contains("bionic_reading") && defaults.size() == 12,
+                !defaults.contains("bold_reading") && defaults.size() == 12,
             "Restoring typography must not change display choices");
     readingPpi.store(212);
     require(appearance::typographyDefaults().value("font_pixels").toInt() == defaultFontPixels(),

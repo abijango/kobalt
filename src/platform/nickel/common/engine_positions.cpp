@@ -127,7 +127,10 @@ bool nativePoint(ldomDocument *doc, const QString &path, const QString &point, Q
     return false;
 }
 bool nativeText(ldomDocument *doc, const QString &path, const QString &id, ldomNode *element, QString &sourceText,
-                QString *error) {
+                QString *error, bool *textChanged = nullptr) {
+    if (textChanged) {
+        *textChanged = false;
+    }
     auto fail = [error](const QString &message) {
         if (error)
             *error = message;
@@ -158,8 +161,15 @@ bool nativeText(ldomDocument *doc, const QString &path, const QString &id, ldomN
             --depth;
         }
     }
-    if (parser.hasError() || matches != 1 || sourceText != qstring(element->getText()))
+    if (parser.hasError() || matches != 1) {
         return fail(strings::get("error.native_text_anchor_cannot_be_mapped_without_changing_its_text"));
+    }
+    if (sourceText != qstring(element->getText())) {
+        if (textChanged) {
+            *textChanged = true;
+        }
+        return fail(strings::get("error.native_text_anchor_cannot_be_mapped_without_changing_its_text"));
+    }
     return true;
 }
 }
@@ -278,21 +288,45 @@ QString NickelPositionCodec::encode(const ReaderModel &model, QString *error) {
     if (path.isEmpty())
         return fail(strings::get("error.position_has_no_source_path"));
     const auto encodedPath = QString::fromLatin1(QUrl::toPercentEncoding(path, "/"));
+    const auto chapterFallback = [&] {
+        auto *body = doc->nodeFromXPath(U"/body");
+        if (!body) {
+            return fail(strings::get("error.missing_publication_body"));
+        }
+        for (int i = 0; i < body->getChildCount(); ++i) {
+            auto *node = body->getChildNode(i);
+            if (node != fragment && node->isElement() && node->isNodeName("DocFragment") &&
+                qstring(node->getAttributeValue("Source")) == path) {
+                return fail(strings::get("error.ambiguous_native_chapter_path"));
+            }
+        }
+        // Keep the exact local anchor. Nickel gets a valid chapter start when
+        // an unlabelled page or normalized text cannot supply an exact offset.
+        // This still lets it update the active book, cover and percentage.
+        if (error) {
+            error->clear();
+        }
+        return encodedPath;
+    };
     if (target == fragment && pointer.getOffset() == 0)
         return encodedPath;
     const auto prefix = qstring(fragment->getAttributeValue("id")) + "_ ";
     auto *element = target->isText() ? target->getParentNode() : target;
     while (element && element != fragment && element->getAttributeValue("id").empty())
         element = element->getParentNode();
-    if (!element || element == fragment)
-        return fail(strings::get("error.position_has_no_source_element_id"));
+    if (!element || element == fragment) {
+        return chapterFallback();
+    }
     const auto internalId = qstring(element->getAttributeValue("id"));
-    if (!internalId.startsWith(prefix))
-        return fail(strings::get("error.position_has_no_publication_element_id"));
+    if (!internalId.startsWith(prefix)) {
+        return chapterFallback();
+    }
     const auto id = internalId.mid(prefix.size());
     QString sourceText;
-    if (!nativeText(doc, path, id, element, sourceText, error))
-        return {};
+    bool textChanged = false;
+    if (!nativeText(doc, path, id, element, sourceText, error, &textChanged)) {
+        return textChanged ? chapterFallback() : QString();
+    }
     int units = 0;
     QVector<ldomNode *> pending{element};
     while (!pending.isEmpty()) {

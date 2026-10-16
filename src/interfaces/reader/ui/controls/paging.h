@@ -8,13 +8,19 @@ namespace kobalt::ui {
 class PagerBar : public QWidget {
 public:
     PagerBar(QWidget *parent, const QString &prefix);
-    void setPage(int page, int count, const QString &label = {});
+    void setPage(int page, int count, const QString &label = {}, bool wrap = false);
+    // Resolve a user turn using the last presented page and list bounds.
+    int turnTarget(int direction) const;
     QLabel *counter;
     CellButton *previous, *next;
 
 protected:
     void paintEvent(QPaintEvent *) override;
     void resizeEvent(QResizeEvent *) override;
+
+private:
+    int page = 0, count = 1;
+    bool wrap = false;
 };
 class PageControls : public QWidget {
 public:

@@ -96,11 +96,7 @@ void DescribedOption::paintEvent(QPaintEvent *) {
                     appearance.indicatorSize.width(), appearance.indicatorSize.height());
     painter.fillRect(rect(), paper);
     if (appearance.dividers) {
-        painter.setPen(dividerColor(this));
-        if (appearance.dividers.testFlag(Qt::TopEdge))
-            painter.drawLine(0, 0, width(), 0);
-        if (appearance.dividers.testFlag(Qt::BottomEdge))
-            painter.drawLine(0, height() - 1, width(), height() - 1);
+        paintEdges(painter, rect(), appearance.dividers, dividerColor(this));
     }
     if (!isEnabled())
         painter.setOpacity(.45);
@@ -132,13 +128,14 @@ void DescribedOption::paintEvent(QPaintEvent *) {
     } else {
         painter.setPen(QPen(ink, m::control::border));
         painter.setBrush(isChecked() ? ink : paper);
-        const QRectF roundedTrack = QRectF(box).adjusted(.5, .5, -.5, -.5);
+        const qreal inset = int(m::control::border) / 2.0;
+        const QRectF roundedTrack = QRectF(box).adjusted(inset, inset, -inset, -inset);
         painter.drawRoundedRect(roundedTrack, roundedTrack.height() / 2, roundedTrack.height() / 2);
-        const int inset = px(6), diameter = box.height() - 2 * inset;
-        const int thumbX = isChecked() ? box.right() - inset - diameter + 1 : box.left() + inset;
+        const int thumbInset = px(6), diameter = box.height() - 2 * thumbInset;
+        const int thumbX = isChecked() ? box.right() - thumbInset - diameter + 1 : box.left() + thumbInset;
         painter.setPen(Qt::NoPen);
         painter.setBrush(isChecked() ? paper : ink);
-        painter.drawEllipse(QRect(thumbX, box.top() + inset, diameter, diameter));
+        painter.drawEllipse(QRect(thumbX, box.top() + thumbInset, diameter, diameter));
     }
     painter.setPen(ink);
     QFont labelFont = font();

@@ -32,7 +32,7 @@ void BrandIcon::paintEvent(QPaintEvent *) {
 }
 LightSwipeNotice::LightSwipeNotice(QWidget *parent)
     : Panel(parent, Edges(Qt::LeftEdge) | Qt::TopEdge | Qt::RightEdge | Qt::BottomEdge) {
-    setEdgeWidth(2);
+    setEdgeWidth(m::chrome::heavyRule);
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setFocusPolicy(Qt::NoFocus);
     percentage = new QLabel(this);
@@ -47,8 +47,10 @@ LightSwipeNotice::LightSwipeNotice(QWidget *parent)
     setLevel(false, 0);
 }
 void LightSwipeNotice::setLevel(bool warmth, int value) {
+    const int next = qBound(0, value, 100);
+    const bool changed = warm != warmth || level != next;
     warm = warmth;
-    level = qBound(0, value, 100);
+    level = next;
     percentage->setText(QString::number(level) + '%');
     const auto style =
         styles::font(m::lightSwipe::captionText) + (darkTheme(this) ? "color:#aaaaaa;" : "color:#666666;");
@@ -56,7 +58,8 @@ void LightSwipeNotice::setLevel(bool warmth, int value) {
         readerStyle(caption, style);
     caption->setText((warm ? strings::get("light_panel.warmth") : strings::get("light_panel.brightness")).toUpper());
     setAccessibleName((warm ? strings::get("reader.warmth") : strings::get("reader.brightness")).arg(level));
-    update();
+    if (changed)
+        update();
 }
 void LightSwipeNotice::centerIn(const QSize &viewport) {
     const int cardWidth = qMin(int(m::lightSwipe::width), qMax(1, viewport.width() - 2 * int(m::spacing::section)));
@@ -200,7 +203,7 @@ void Panel::paintEvent(QPaintEvent *event) {
     QFrame::paintEvent(event);
     QPainter painter(this);
     paintEdges(painter, rect(), separators, palette().color(softEdges ? QPalette::Mid : QPalette::WindowText),
-               edgeWidth);
+               edgeWidth > 0 ? edgeWidth : int(m::control::border));
     paintEdges(painter, rect(), dividers, dividerColor(this), m::control::border);
 }
 }

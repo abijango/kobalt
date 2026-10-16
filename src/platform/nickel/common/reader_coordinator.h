@@ -1,5 +1,6 @@
 #pragma once
 #include "interfaces/reader_interface.h"
+#include "usb_dialog_overlay.h"
 #include "engine/crengine/reader_model.h"
 #include "reading/reading_progress.h"
 #include <QObject>
@@ -10,6 +11,8 @@
 #include <functional>
 #include <memory>
 
+class QKeyEvent;
+
 namespace kobalt {
 class NativeOpening;
 class NativePublication;
@@ -19,14 +22,19 @@ class NativeProgress;
 class ReaderSession;
 class ReaderOrientation;
 class SourceLease;
+enum class ReaderBookRoute;
 namespace nickel {
 struct ReaderEnvironment;
 struct CoordinatorBindings {
     bool (*enabled)();
     void (*installInput)(QObject *) = nullptr;
+    void (*goHome)() = nullptr;
     const void *(*publicationKeys)(const NativeOpening &) = nullptr;
     void (*publicationMismatch)(const NativePublication &, const QString &, const QString &) = nullptr;
 };
+// Called by Nickel's Home key filter before it clears native navigation.
+bool interceptHomeKey(QKeyEvent *event);
+
 // The retain callback runs synchronously after the coordinator's opening
 // checks. Neither the callback nor borrowed firmware arguments are retained.
 using RetainOpening = std::function<std::unique_ptr<NativeOpening>()>;
@@ -37,8 +45,10 @@ public:
     bool available() const;
     bool idleForBenchmark() const;
     bool begin(const RetainOpening &retainOpening);
+    bool handleHomeKey(QKeyEvent *event);
 
 private:
+    bool eventFilter(QObject *object, QEvent *event) override;
     ReaderEnvironment &environment_;
     CoordinatorBindings bindings_;
     kobalt::NativeLifecycle *lifecycle;
@@ -76,7 +86,8 @@ private:
     void updateOpening(kobalt::OpeningStage stage, int percent);
     unsigned generation = 0;
     bool busy = false;
-    bool sleepExportArmed = false;
+    bool homeAfterClose = false;
+    void finishHomeNavigation();
 
     void status(const QString &value, const QString &reason = {});
     void hideLoading();
@@ -89,11 +100,13 @@ private:
     bool sameBook() const;
     void poll();
     void watch();
+    void prepareOpening(kobalt::ReaderBookRoute candidate);
+    void missingAssets(bool assetsReady);
+    bool missingAssetsBeforeOpening(bool assetsReady);
     void load();
 
     void showReader();
-    void armSleepExport();
-    void completeSleepExport();
+    UsbDialogOverlay usbDialog_;
 };
 
 }

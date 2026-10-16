@@ -15,6 +15,7 @@
 #include <QTimer>
 #include "interfaces/reader/ui/style/metrics.h"
 #include "platform/api/kobo_refresh.h"
+#include "support/qt_compat.h"
 #include <QApplication>
 #include <QPointer>
 #include <QProgressBar>
@@ -121,6 +122,19 @@ public:
         layoutWidgets();
         update();
     }
+    void afterFirstPaint(std::function<void()> callback) {
+        if (painted) {
+            scheduleAfterPaint(std::move(callback));
+        } else {
+            firstPaint = std::move(callback);
+        }
+    }
+    void refreshFonts() {
+        setFont(ui::interfaceFont());
+        ui::readerStyle(this, ui::styles::reader());
+        layoutWidgets();
+        ui::refreshInterfaceText(this);
+    }
     void reject() override {
         if (embedded)
             emit rejected();
@@ -158,6 +172,12 @@ protected:
         // Nickel's Qt5 stylesheet paints dialogs white even with a dark palette.
         // Own the whole splash background, including the area behind the logo.
         painter.fillRect(rect(), palette().color(QPalette::Window));
+        if (!painted) {
+            painted = true;
+            if (firstPaint) {
+                scheduleAfterPaint(std::move(firstPaint));
+            }
+        }
         if (fallback && !automatic)
             return;
         painter.translate(origin());
@@ -226,6 +246,13 @@ protected:
     }
 
 private:
+    void scheduleAfterPaint(std::function<void()> callback) {
+        kobalt::qt::later(0, this, [this, callback = std::move(callback)] {
+            if (isVisible()) {
+                callback();
+            }
+        });
+    }
     qreal scale() const {
         return qMin(width() / ui::metrics::opening::referenceWidth, height() / ui::metrics::opening::referenceHeight);
     }
@@ -241,6 +268,8 @@ private:
     const bool embedded;
     QTimer hintTimer;
     ui::Button *cancel;
+    bool painted = false;
+    std::function<void()> firstPaint;
 };
 
 class OpeningView final : public ReaderOpeningView {
@@ -272,8 +301,30 @@ public:
             dialog->showFallback(state);
     }
     void setProgress(int percent) override {
-        if (dialog)
-            dialog->progress->setValue(qMax(dialog->progress->value(), percent));
+        if (!dialog)
+            return;
+        auto *bar = dialog->progress;
+        const int value = qMax(bar->value(), percent);
+        if (bar->value() == value)
+            return;
+        // QProgressBar can repaint synchronously. Let this event-loop pass
+        // finish so later progress or closing can replace obsolete values.
+        const bool updates = bar->updatesEnabled();
+        if (updates)
+            bar->setUpdatesEnabled(false);
+        bar->setValue(value);
+        if (updates)
+            bar->setUpdatesEnabled(true);
+    }
+    void afterFirstPaint(std::function<void()> callback) override {
+        if (dialog) {
+            dialog->afterFirstPaint(std::move(callback));
+        }
+    }
+    void refreshFonts() override {
+        if (dialog) {
+            dialog->refreshFonts();
+        }
     }
 
 private:
