@@ -10,6 +10,8 @@ Hardcover progress sync logs the command's stdout, stderr and exit reason, and o
 
 When NickelHardcover's config.ini contains a token, reading progress is sent with Hardcover's GraphQL API. The update sets progress_pages on the newest read, using that read's edition, which is the progress the site displays. The command remains the fallback when no token is configured. The token is never written to the log. The network call does not delay sleep, USB or shutdown.
 
+Hardcover's ISBN lookup keeps literal `#`, `?` and percent characters in a sideloaded filename, and reads a store book from Nickel's kepub directory.
+
 ## v1.0-beta.3
 
 ### What's changed

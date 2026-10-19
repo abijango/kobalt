@@ -1,5 +1,6 @@
 #include "hardcover_progress.h"
 
+#include "local_book_path.h"
 #include "publication/zip_resource.h"
 #include "support/diagnostics.h"
 #include "support/qt_compat.h"
@@ -27,11 +28,6 @@ const auto insertMutation = QStringLiteral(
     "mutation InsertUserBookRead($id: Int!, $pages: Int, $editionId: Int, $startedAt: date) { "
     "insert_user_book_read(user_book_id: $id, user_book_read: { progress_pages: $pages, edition_id: $editionId, "
     "started_at: $startedAt }) { error user_book_read { id progress_pages edition_id } } }");
-QString localBookPath(const QString &contentId) {
-    if (contentId.startsWith(QStringLiteral("file://")))
-        return QUrl(contentId).toLocalFile();
-    return contentId;
-}
 QString zipText(const QString &path, const QString &name) {
     ZipResource zip;
     if (!zip.open(path, name, 2 * 1024 * 1024))
@@ -147,6 +143,10 @@ QString hardcoverToken(const QString &configText) {
         token = token.mid(7).trimmed();
     return token;
 }
+QString hardcoverBookPath(const QString &contentId) {
+    const auto local = localReaderBookPath(contentId);
+    return local.isEmpty() ? downloadedReaderBookPath(contentId) : local;
+}
 HardcoverUserBook hardcoverSelectUserBook(const QJsonArray &books) {
     HardcoverUserBook chosen;
     bool readingChosen = false;
@@ -246,7 +246,7 @@ void HardcoverProgress::update(const QString &contentId, const QString &linkedId
             done(payload.value(QStringLiteral("data")).toObject(), {});
         });
     };
-    const auto path = localBookPath(contentId);
+    const auto path = hardcoverBookPath(contentId);
     const auto isbns = epubIsbns(path);
     auto resolveEdition = [post, fail, isbns, percent, finished, network, linkedId](qint64 userId) {
         auto withEdition = [post, fail, percent, finished, network, userId](qint64 editionId, qint64 bookId,

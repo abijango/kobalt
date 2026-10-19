@@ -229,6 +229,16 @@ int main(int argc, char **argv) {
                 QStringLiteral("quoted"),
             "Quoted authorization was not read");
     require(hardcoverToken(QStringLiteral("debug=true\n")).isEmpty(), "A config without a token looked configured");
+    require(hardcoverBookPath(QStringLiteral("file:///mnt/onboard/book#part?%20.epub")) ==
+                QStringLiteral("/mnt/onboard/book#part?%20.epub"),
+            "Sideloaded ContentID was decoded as a URL");
+    require(hardcoverBookPath(QStringLiteral("12345678-1234-1234-1234-123456789abc")) ==
+                QStringLiteral("/mnt/onboard/.kobo/kepub/12345678-1234-1234-1234-123456789abc"),
+            "Store ContentID was not read from the kepub directory");
+    require(hardcoverBookPath(QStringLiteral("file://server/book.epub")).isEmpty() &&
+                hardcoverBookPath(QStringLiteral("../book")).isEmpty() &&
+                hardcoverBookPath(QStringLiteral("folder/book")).isEmpty(),
+            "A non-local or escaped ContentID became an EPUB path");
     {
         const HardcoverRead older{100, 2661, 400, QStringLiteral("2026-10-12")};
         const HardcoverRead newer{200, 31889, 432, QStringLiteral("2026-01-01")};

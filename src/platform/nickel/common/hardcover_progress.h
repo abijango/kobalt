@@ -37,6 +37,9 @@ struct HardcoverUserBook {
 
 // Token text from NickelHardcover's config.ini. The raw token is not logged.
 QString hardcoverToken(const QString &configText);
+// Filesystem path for a Nickel ContentID. Sideloaded IDs keep literal #, ?
+// and percent characters. Other IDs are filenames in Nickel's kepub directory.
+QString hardcoverBookPath(const QString &contentId);
 HardcoverUserBook hardcoverSelectUserBook(const QJsonArray &books);
 // `reads` is ordered by id. Page count is the percent of that read's edition.
 HardcoverProgressUpdate hardcoverProgressUpdate(const QVector<HardcoverRead> &reads, qint64 userBookId,
