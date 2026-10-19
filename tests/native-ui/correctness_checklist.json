@@ -227,9 +227,11 @@
     {
       "id": "theme-size-stacking",
       "platform": "native",
-      "expected": "Theme replay, narrow/wide relayout, dropdown borders and popup placement preserve clipping and stacking.",
+      "expected": "Theme replay, narrow/wide relayout, adaptive header/footer size labels, dropdown borders and popup placement preserve clipping and stacking.",
       "assertions": [
-        "reader-window:chromeSizePopoverCoversPanelBorder",
+        "reader-window:chromeSizeSegmentsApplyAndPersist",
+        "reader-window:chromeSizeLabelsFollowAvailableWidth",
+        "reader-window:rotationLabelsFollowAvailableWidth",
         "reader-window:searchClearConstructionAndReplay",
         "desktop-window:resizeAndNavigate",
         "desktop-window:fontHoverKeepsHeaderBorder",

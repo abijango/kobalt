@@ -1,4 +1,6 @@
 #include "support/qt_compat.h"
+#include "platform/nickel/common/native_lifecycle.h"
+#include "platform/nickel/common/native_database_wait.h"
 #include "platform/nickel/common/publication_source.h"
 #include "platform/nickel/common/native_reading_session.h"
 #include "session_calls.h"
@@ -109,7 +111,12 @@ bool workerReady() {
 bool flush() {
     auto *engine = api().engine();
     bool saved = false;
-    const auto save = [engine, &saved] {
+    const bool nonblocking = NativeLifecycle::usbSaveAllowed();
+    const auto save = [engine, &saved, nonblocking] {
+        NativeDatabaseWait wait(api().connection(api().dbName(api().device()), true), nonblocking);
+        if (!wait.ready()) {
+            return;
+        }
         api().saveEvents(engine);
         // EventManager's transient cache accepts only the default database.
         saved = api().flushEvents(QString());
@@ -125,8 +132,10 @@ bool addTime(const QString &book, int seconds) {
         return seconds == 0;
     const auto &a = api();
     const auto db = a.dbName(a.device());
-    if (!a.begin(db))
+    NativeDatabaseWait wait(a.connection(db, true), NativeLifecycle::usbSaveAllowed());
+    if (!wait.ready() || !a.begin(db)) {
         return false;
+    }
     auto volume = a.get(book, db);
     const auto before = a.values(&volume);
     if (before.value("ContentID").toString() != book) {

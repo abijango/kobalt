@@ -56,14 +56,14 @@ BookmarkList::BookmarkList(QWidget *parent) : Panel(parent) {
     pager->previous->setAccessibleName(strings::get("bookmarks.previous"));
     pager->next->setAccessibleName(strings::get("bookmarks.next"));
     connect(pager->previous, &QPushButton::clicked, this, [this] {
-        if (page > 0) {
-            --page;
+        if (pageCount() > 1) {
+            page = pager->turnTarget(-1);
             redraw();
         }
     });
     connect(pager->next, &QPushButton::clicked, this, [this] {
-        if (page + 1 < pageCount()) {
-            ++page;
+        if (pageCount() > 1) {
+            page = pager->turnTarget(1);
             redraw();
         }
     });
@@ -125,7 +125,7 @@ void BookmarkList::redraw() {
     listHeader->setCaptions(strings::get("bookmarks.summary").arg(items.size()),
                             items.isEmpty() ? QString() : strings::get("chapter_contents.page"));
     pager->setVisible(items.size() > rows);
-    pager->setPage(page, pageCount());
+    pager->setPage(page, pageCount(), {}, true);
     while (buttons.size() < qMin(rows, int(items.size()))) {
         const int row = buttons.size();
         auto *button = new ui::ListRow(this);
@@ -172,6 +172,5 @@ void BookmarkList::redraw() {
         itemRow->setAccessory(
             ui::ListRow::Caption{item.page >= 0 ? QString::number(item.page + 1) : QString(), numberWidth});
     }
-    update();
 }
 }

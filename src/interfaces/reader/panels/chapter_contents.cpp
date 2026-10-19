@@ -47,14 +47,14 @@ ChapterContents::ChapterContents(QWidget *parent) : Panel(parent) {
     pager->previous->setAccessibleName(strings::get("chapter_contents.previous_chapters"));
     pager->next->setAccessibleName(strings::get("chapter_contents.next_chapters"));
     connect(pager->previous, &QPushButton::clicked, this, [this] {
-        if (page > 0) {
-            --page;
+        if (pageCount() > 1) {
+            page = pager->turnTarget(-1);
             redraw();
         }
     });
     connect(pager->next, &QPushButton::clicked, this, [this] {
-        if (page + 1 < pageCount()) {
-            ++page;
+        if (pageCount() > 1) {
+            page = pager->turnTarget(1);
             redraw();
         }
     });
@@ -116,7 +116,7 @@ void ChapterContents::redraw() {
         lastPage = qMax(lastPage, item.page);
     const bool pagesKnown = lastPage >= 0;
     listHeader->setCaptions(summary->text(), pagesKnown ? strings::get("chapter_contents.page") : QString());
-    pager->setPage(page, pageCount());
+    pager->setPage(page, pageCount(), {}, true);
     while (buttons.size() < qMin(rows, int(items.size()))) {
         const int row = buttons.size();
         auto *button = new ui::ListRow(this);
@@ -166,7 +166,6 @@ void ChapterContents::redraw() {
         itemRow->trailingLabel()->setObjectName(item.name + "Page");
         button->setAccessibleName(strings::get("common.numbered_title").arg(index + 1).arg(item.label));
     }
-    update();
     if (changed && isVisible())
         changed();
 }

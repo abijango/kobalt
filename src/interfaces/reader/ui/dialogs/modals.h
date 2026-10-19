@@ -43,6 +43,9 @@ public:
     void centerCard();
     void fitCard();
     void setDelayedProgress(bool active, qint64 elapsedMilliseconds, int percent, const QString &message = {});
+    // Window coordinates for a value-only update of the visible progress bar.
+    // Appearance, message and layout changes keep the modal's normal refresh.
+    QRect progressUpdateRect(int percent, const QString &message = {}) const;
     void anchorTo(const QRect &bounds) {
         anchor = bounds;
         centerCard();

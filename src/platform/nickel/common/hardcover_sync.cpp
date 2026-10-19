@@ -181,7 +181,7 @@ void HardcoverSync::flush() {
     if (pending.isEmpty())
         return;
     const auto item = pending.first();
-    if (progressClient->configured()) {
+    if (graphql) {
         running = true;
         inflightId = item.contentId;
         inflightPercent = item.percent;

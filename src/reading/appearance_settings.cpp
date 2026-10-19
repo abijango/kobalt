@@ -4,6 +4,10 @@
 namespace kobalt::appearance {
 QJsonObject readerPreferences(const QJsonObject &global, const QJsonObject &book) {
     auto result = global;
+    if (!result.contains("bold_reading") && result.contains("bionic_reading")) {
+        result["bold_reading"] = result.value("bionic_reading");
+    }
+    result.remove("bionic_reading");
     for (const auto *key : layoutKeys)
         if (book.contains(key))
             result[key] = book.value(key);
@@ -47,7 +51,7 @@ QJsonObject benchmarkTypography(const QString &identity) {
                        {"weight_steps", 0},
                        {"font_weight", 400},
                        {"font_optical_size", 0},
-                       {"bionic_reading", "off"},
+                       {"bold_reading", "off"},
                        {"hyphenation", QStringLiteral("off")},
                        {"dark_mode", false},
                        {"smooth_images", true}});

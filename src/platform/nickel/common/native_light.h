@@ -16,6 +16,9 @@ public:
     ~NativeLight() override;
     static bool available();
     bool initialize();
+    bool hasAutomaticBrightness() const;
+    bool automaticBrightness() const;
+    bool setAutomaticBrightness(bool enabled);
     bool hasWarmth() const;
     int warmth() const;
     int warmthMinimum() const;
@@ -38,6 +41,6 @@ private:
     QPointer<QWidget> anchor;
     QPointer<QObject> frontLight;
     int gestureStart = -1;
-    bool reportedGestureFailure = false;
+    bool reportedGestureFailure = false, gestureAutomatic = false;
 };
 }

@@ -40,9 +40,6 @@ public:
                !identity_.endsWith(".kepub.epub", Qt::CaseInsensitive);
     }
     void releaseNative();
-    ReadingChapters *chapters() const {
-        return bridge ? bridge->chapters() : nullptr;
-    }
     void observeReading();
     void stopReading();
     // Active time for this opening, excluding sleep and hidden reader time.

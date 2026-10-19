@@ -7,6 +7,7 @@ function(kobalt_publication_library name)
         "${KOBALT_COMPONENT_ROOT}/src/publication/publication.cpp"
         "${KOBALT_COMPONENT_ROOT}/src/publication/zip_resource.cpp"
         "${KOBALT_COMPONENT_ROOT}/src/publication/resource_cache.cpp"
+        "${KOBALT_COMPONENT_ROOT}/src/publication/local_resources.cpp"
         "${KOBALT_COMPONENT_ROOT}/src/publication/image_policy.cpp")
     set_target_properties(${name} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_options(${name} PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)

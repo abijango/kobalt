@@ -23,6 +23,18 @@ int main(int argc, char **argv) {
           QStringLiteral("file://relative.epub"), QStringLiteral("12345678-1234-1234-1234-123456789abc"), QString()}) {
         require(localReaderBookPath(identity).isEmpty(), "Nonlocal identity became a local EPUB path");
     }
+    for (const auto &identity :
+         {QStringLiteral("12345"), QStringLiteral("12345678-1234-1234-1234-123456789abc"),
+          QStringLiteral("server-book_42"), QStringLiteral("book%2Fpart"), QString::fromUtf8("caf\xc3\xa9")}) {
+        require(downloadedReaderBookPath(identity) == "/mnt/onboard/.kobo/kepub/" + identity,
+                "Downloaded book ID was restricted to UUIDs or changed by URL decoding");
+    }
+    for (const auto &identity :
+         {QString(), QStringLiteral("."), QStringLiteral(".."), QStringLiteral("../book"),
+          QStringLiteral("folder/book"), QStringLiteral("folder\\book"), QStringLiteral("/absolute"),
+          QStringLiteral("https://example.org/book"), QString("book") + QChar(0) + "other"}) {
+        require(downloadedReaderBookPath(identity).isEmpty(), "Downloaded ID escaped its filename boundary");
+    }
     for (const auto &name :
          {QStringLiteral("book.kepub.epub"), QStringLiteral("book#part.kepub.epub"),
           QStringLiteral("book?part.kepub.epub"), QStringLiteral("book%20part.kepub.epub"),

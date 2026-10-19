@@ -115,8 +115,6 @@ int main(int argc, char **argv) {
         rows->setSpacing(ui::metrics::control::rowGap);
     }
     kobalt::reader::AppearancePanelInputs appearanceInputs;
-    appearanceInputs.headerCaption = "Header";
-    appearanceInputs.footerCaption = "Footer";
     kobalt::reader::AppearancePanel appearance({typography, layout, typeRows, pageRows}, appearanceInputs);
     const int sampleHalfPoints = 21;
     appearance.sizeSlider->setValue(sampleHalfPoints);
@@ -166,8 +164,8 @@ int main(int argc, char **argv) {
                 return;
             }
             QTest::mouseClick(larger, Qt::LeftButton, {}, larger->rect().center());
-            const bool appearancePassed = appearance.sizeSlider->value() == sampleHalfPoints + 1 &&
-                                          sample->font().pixelSize() == kobalt::halfPointPixels(sampleHalfPoints + 1);
+            const bool appearancePassed = appearance.sizeSlider->value() == sampleHalfPoints + 2 &&
+                                          sample->font().pixelSize() == kobalt::halfPointPixels(sampleHalfPoints + 2);
             showOpening(true);
             app.processEvents();
             auto *back = opening->window()->findChild<QPushButton *>("rrOpeningBack");

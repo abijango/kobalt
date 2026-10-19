@@ -1,6 +1,7 @@
 #pragma once
 #include "assets/assets.h"
 #include "assets/bundled_fonts.h"
+#include "assets/system_fonts.h"
 #include "storage/reader_storage.h"
 
 namespace kobalt::nickel {
@@ -30,9 +31,18 @@ struct ReaderEnvironment {
 #endif
                          QString::fromLatin1(activePath), QString::fromLatin1(stateReport),
                          QString::fromLatin1(sessionReport)};
-    EngineFontInputs fonts() const {
-        return engineFontInputs(assets, QStringLiteral(KOBALT_SYSTEM_FONT_DIRECTORY),
-                                QStringLiteral("/mnt/onboard/fonts"), QStringLiteral("/mnt/onboard"));
+    EngineFontInputs fonts() {
+        auto inputs =
+            engineFontInputs(assets, {}, QStringLiteral("/mnt/onboard/fonts"), QStringLiteral("/mnt/onboard"));
+        if (inputs.sources.bundled.isEmpty()) {
+            return inputs;
+        }
+        if (!systemFontsReady) {
+            systemFonts = systemFontFiles(QStringLiteral(KOBALT_SYSTEM_FONT_DIRECTORY), fontCopies);
+            systemFontsReady = true;
+        }
+        inputs.sources.systemFiles = systemFonts;
+        return inputs;
     }
     QString placeholderFamily() {
         if (placeholder.isEmpty())
@@ -42,5 +52,7 @@ struct ReaderEnvironment {
 
 private:
     QString placeholder;
+    QStringList systemFonts;
+    bool systemFontsReady = false;
 };
 }

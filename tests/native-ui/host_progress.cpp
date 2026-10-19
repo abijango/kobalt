@@ -18,14 +18,21 @@ public:
     bool takeChange() override {
         return std::exchange(progress->changed, false);
     }
-    bool write(const ReadingProgress &expected, const QString &location, double, bool finished,
+    bool write(const ReadingProgress &expected, const QString &location, double percent, bool finished,
                ReadingProgress *verified, QString *error) override {
+        if (progress->failWrite) {
+            if (error) {
+                *error = "The database is busy.";
+            }
+            return false;
+        }
         if (!(expected == progress->current)) {
             if (error)
                 *error = "The saved position changed.";
             return false;
         }
         ++progress->writes;
+        progress->percent = percent;
         if (!location.isEmpty())
             progress->current.location = location;
         progress->current.status = finished ? 2 : 1;
@@ -37,9 +44,6 @@ public:
     }
     void observeReading(double, const QString &) override {}
     void stopReading() override {}
-    ReadingChapters *chapters() override {
-        return nullptr;
-    }
 
 private:
     std::shared_ptr<HostProgress> progress;

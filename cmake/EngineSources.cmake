@@ -4,6 +4,7 @@ set(KOBALT_ENGINE_SOURCES
     engine/crengine/reader_model
     engine/crengine/reader_source
     engine/crengine/reader_text
+    engine/crengine/reader_word_counts
     engine/crengine/reader_positions
     engine/crengine/reader_alignment
     engine/crengine/reader_page_layout

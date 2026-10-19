@@ -97,10 +97,9 @@ int main(int argc, char **argv) {
         const QSize pageArea(758, 900);
         const auto originalState = model.state();
         const auto originalKey = bookmarkLayoutKey(model.pages(), originalState, pageArea);
-        for (const auto *field : {"top_margin_pixels", "bottom_margin_pixels", "weight_steps", "bionic_reading"}) {
+        for (const auto *field : {"top_margin_pixels", "bottom_margin_pixels", "weight_steps", "bold_reading"}) {
             auto changed = originalState;
-            changed[field] =
-                QByteArray(field) == "bionic_reading" ? QJsonValue(QStringLiteral("bold")) : QJsonValue(40);
+            changed[field] = QByteArray(field) == "bold_reading" ? QJsonValue(QStringLiteral("bold")) : QJsonValue(40);
             require(bookmarkLayoutKey(model.pages(), changed, pageArea) != originalKey,
                     "A pagination setting reused the bookmark layout key");
         }

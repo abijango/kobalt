@@ -51,6 +51,9 @@ public:
         return names_;
     }
     QByteArray readBounded(const QString &name, qint64 limit);
+    // After advisory inspection, let the engine retry with its normal resource
+    // budget. Transfer, cancellation and changed-byte failures remain fatal.
+    bool resumeAfterInspection();
     qint64 size(const QString &name);
     qint64 read(const QString &name, qint64 offset, void *buffer, qint64 count);
     QString error() const {

@@ -17,6 +17,8 @@ struct ReaderFrame {
     qint64 damageFrom = 0;
     QJsonObject state, resources;
     QString title, author, error;
+    qint64 totalWords = -1;
+    QString nativePosition, nativePositionError;
     QImage cover;
     QStringList fonts;
     QVector<ReadingFont> fontCatalog;
@@ -34,6 +36,11 @@ struct RenderProgress {
     OpeningStage stage = OpeningStage::Styles;
     int percent = 0;
     qint64 elapsedMilliseconds = 0;
+    // Reflow styles and pagination share one bar; a phase change never empties it.
+    int overallPercent() const {
+        const int phase = qBound(0, int(stage) - int(OpeningStage::Styles), 2);
+        return qMin(100, (phase * 100 + qBound(0, percent, 100)) / 2);
+    }
 };
 
 // Where a platform position lies relative to the current page.
@@ -125,6 +132,9 @@ public:
     QString error() const {
         return frame.error;
     }
+    bool formattingWarning() const {
+        return formattingWarning_;
+    }
     QString imageWarning() const {
         return frame.resources.value("image_error").toString();
     }
@@ -143,10 +153,19 @@ public:
     QJsonObject state() const {
         return frame.state;
     }
+    // The newest requested settings, including any whose frame is still rendering.
+    QJsonObject requestedState() const {
+        return desired;
+    }
     bool temporaryTypography() const {
         return !temporaryAppearance.isEmpty();
     }
     QJsonObject persistentState() const;
+    // Captured with the displayed frame, so sleep never waits for the engine worker.
+    QString savedNativePosition(QString *error) const {
+        *error = frame.nativePositionError;
+        return frame.nativePosition;
+    }
     int page() const {
         return frame.state.value("page").toInt();
     }
@@ -240,9 +259,14 @@ public:
     ChapterSelection graphSelection() const {
         return frame.graphSelection;
     }
+    qint64 totalWords() const {
+        return frame.totalWords;
+    }
     void setChapters(QVector<ChapterTarget> contents, QVector<ChapterTarget> graph);
 
 private:
+    bool formattingWarning_ = false;
+    QJsonObject formattingDetails_;
     ReaderSession(std::shared_ptr<ReaderModel> retainedModel, QString placeholderFamily);
     EngineFontInputs fonts_;
     QString placeholderFamily_;

@@ -64,6 +64,7 @@ void captureChapters(ReaderFrame &result, ReaderModel &model) {
     result.state["chapter_pages"] = chapter.pages;
     result.chapters = model.chapters();
     result.chapterGraph = model.chapterGraph();
+    result.totalWords = model.totalWords();
     result.contentsSelection = model.chapterSelection(result.chapters);
     result.graphSelection = model.chapterSelection(result.chapterGraph);
 }
@@ -85,12 +86,13 @@ void prepareNeighbours(ReaderModel &model, int direction, const std::function<bo
 }
 // `neighbours` is false when the caller hands the frame to the screen first
 // and prepares the neighbour pages afterwards.
-ReaderFrame capture(ReaderModel &model, bool neighbours = true) {
+ReaderFrame capture(ReaderModel &model, const PositionCodec &positions, bool neighbours = true) {
     engineActivity().checkpoint();
     ReaderFrame result;
     result.image = model.image(model.page());
     result.links = model.pageLinks();
     result.state = model.state();
+    result.nativePosition = model.platformPosition(positions, &result.nativePositionError);
     captureChapters(result, model);
     result.state["page"] = model.page();
     result.state["pages"] = model.pages();
@@ -157,6 +159,8 @@ std::unique_ptr<ReaderSession> ReaderSession::retained() {
     frame.resources["ready_images"] = 0;
     auto retained = std::unique_ptr<ReaderSession>(new ReaderSession(model, placeholderFamily_));
     retained->frame = frame;
+    retained->formattingWarning_ = formattingWarning_;
+    retained->formattingDetails_ = formattingDetails_;
     retained->documentAuthor = documentAuthor;
     retained->documentCover = documentCover;
     retained->frame.turnDirection = 0;
@@ -268,6 +272,10 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
     const auto retainedHash =
         openingResult_.ready() && frame.error.isEmpty() && identity_ == identity ? fingerprint : QByteArray();
     const auto retainedSettings = frame.state;
+    const bool retainedWarning = formattingWarning_;
+    const auto retainedDetails = formattingDetails_;
+    formattingDetails_ = {};
+    formattingWarning_ = false;
     const auto systemFont = placeholderFamily_;
     const auto latest = newest;
     const auto job = revision;
@@ -285,8 +293,8 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
     kobalt::qt::invoke(
         engineWorker(),
         [guard, engine, path, identity, size, saved, nativeLocation, lease, factory, finished, report, systemFont,
-         layoutCachePath, documentCachePath, retainedHash, retainedSettings, latest, job, positions,
-         pinnedAppearance]() mutable {
+         layoutCachePath, documentCachePath, retainedHash, retainedSettings, latest, job, positions, pinnedAppearance,
+         retainedWarning, retainedDetails]() mutable {
             EngineJob activity;
             QElapsedTimer timer;
             timer.start();
@@ -315,6 +323,8 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
             Publication publication;
             qint64 directoryMs = 0, hashMs = 0, inspectionMs = 0, modelMs = 0;
             bool cacheHit = false, cacheStored = false, retainedHit = false, savedMatches = false;
+            bool formattingWarning = false;
+            QJsonObject formattingDetails;
             if (cancelled())
                 outcome = interrupted();
             else if (!factory)
@@ -362,14 +372,16 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                 hashMs = timer.elapsed() - directoryMs;
             }
             if (outcome.ready()) {
-                const auto bionic = saved.value("bionic_reading");
+                const auto bionic = saved.value("bold_reading");
                 const auto dark = saved.value("dark_mode");
                 const auto smooth = saved.value("smooth_images");
+                const auto hideNonlinear = saved.value("hide_nonlinear_fragments");
                 if (!savedMatches)
                     saved = {};
-                saved["bionic_reading"] = bionic;
+                saved["bold_reading"] = bionic;
                 saved["dark_mode"] = dark;
                 saved["smooth_images"] = smooth;
+                saved["hide_nonlinear_fragments"] = hideNonlinear;
                 appearance::migrateLineSpacing(saved);
                 if (!pinnedAppearance.isEmpty())
                     appearance::copy(saved, pinnedAppearance);
@@ -426,7 +438,7 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                         outcome = OpeningResult::failed(OpeningFailureKind::InvalidContent,
                                                         strings::key("error.cannot_restore_the_retained_position"));
                     if (outcome.ready() && !cancelled()) {
-                        result = capture(*engine, false);
+                        result = capture(*engine, positions, false);
                         result.author = engine->author();
                         result.cover = engine->coverThumbnail();
                         report(OpeningStage::Ready, 100);
@@ -442,26 +454,33 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                     LayoutCache cache(cancelled() ? QString() : layoutCachePath, KOBALT_LAYOUT_POLICY);
                     LayoutCompatibility layout;
                     cacheHit = !cancelled() && outcome.ready() && cache.lookup(digest, &layout);
+                    // Older warning cache entries have no issue location or excerpt.
+                    // Reinspect warnings so diagnostics always contain the cause.
+                    cacheHit = cacheHit && layout.verdict == LayoutCompatibility::Supported;
                     if (!cacheHit && !cancelled() && outcome.ready()) {
                         layout = inspectLayout(*resources, publication.sizes());
                         if (!cancelled())
                             cacheStored = cache.store(digest, layout);
                     }
                     inspectionMs = timer.elapsed() - inspectionStart;
-                    diagnostic("layout-compatibility", {{"verdict", int(layout.verdict)},
-                                                        {"resources", layout.resources},
-                                                        {"bytes", double(layout.bytes)}});
+                    formattingDetails = kobalt::qt::object({{"verdict", int(layout.verdict)},
+                                                            {"resources", layout.resources},
+                                                            {"bytes", double(layout.bytes)},
+                                                            {"issue", layout.issue},
+                                                            {"resource", layout.resource},
+                                                            {"line", double(layout.line)},
+                                                            {"column", double(layout.column)},
+                                                            {"excerpt", layout.excerpt}});
+                    diagnostic("layout-compatibility", formattingDetails);
                     if (cancelled())
                         outcome = interrupted();
-                    else if (outcome.ready() && layout.verdict != LayoutCompatibility::Supported) {
-                        const auto kind = layout.transientFailure ? OpeningFailureKind::Io
-                                          : layout.verdict == LayoutCompatibility::Incomplete
-                                              ? OpeningFailureKind::InvalidContent
-                                              : OpeningFailureKind::Unsupported;
-                        outcome =
-                            OpeningResult::failed(kind, layout.reasonKey(), {},
-                                                  layout.transientFailure ? ContentDisposition::Retry
-                                                                          : ContentDisposition::RememberRejection);
+                    else if (outcome.ready() && !resources->resumeAfterInspection()) {
+                        outcome = OpeningResult::failed(OpeningFailureKind::Io, layout.reasonKey());
+                    } else if (outcome.ready()) {
+                        // Incomplete inspection does not establish an unsupported
+                        // feature. Keep its details in diagnostics without a warning.
+                        formattingWarning = layout.verdict == LayoutCompatibility::VerticalWriting ||
+                                            layout.verdict == LayoutCompatibility::RightToLeftProgression;
                     }
                     const auto modelStart = timer.elapsed();
                     report(OpeningStage::Text, 0);
@@ -471,7 +490,7 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                             locate(initial);
                         if (outcome.ready()) {
                             report(OpeningStage::Ready, 0);
-                            result = capture(*engine, false);
+                            result = capture(*engine, positions, false);
                             result.author = engine->author();
                             result.cover = engine->coverThumbnail();
                             report(OpeningStage::Ready, 100);
@@ -480,12 +499,32 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                     modelMs = timer.elapsed() - modelStart;
                 }
             }
+            if (outcome.ready() && !cancelled()) {
+                QElapsedTimer counting;
+                counting.start();
+                const auto counts = engine->wordCounts([latest, job, lease] {
+                    return latest->load() == job && lease && !lease->revoked();
+                });
+                captureChapters(result, *engine);
+                diagnostic("chapter-count", {{"ready", counts.total >= 0},
+                                             {"chapters", counts.chapters.size()},
+                                             {"cache_hit", counts.cached},
+                                             {"milliseconds", double(counting.nsecsElapsed()) / 1000000}});
+            }
             if (outcome.ready() && !result.error.isEmpty())
                 outcome = OpeningResult::failed(OpeningFailureKind::Io, "opening.resource-read", result.error);
             if (!outcome.ready() && contentRejected->load())
                 outcome.rememberContentRejection();
             if (cancelled())
                 outcome = interrupted();
+            if (retainedHit) {
+                formattingWarning = retainedWarning;
+                formattingDetails = retainedDetails;
+            }
+            if (outcome.ready() && formattingWarning) {
+                formattingDetails.insert("retained_book_hit", retainedHit);
+                diagnostic("opening-formatting-warning", formattingDetails);
+            }
             diagnostic("opening-phases",
                        {{"directory_ms", double(directoryMs)},
                         {"hash_ms", double(hashMs)},
@@ -503,8 +542,8 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
             const bool opened = outcome.ready();
             kobalt::qt::invoke(
                 qApp,
-                [guard, result = std::move(result), outcome, digest, identity, savedMatches, finished, lease,
-                 job]() mutable {
+                [guard, result = std::move(result), outcome, digest, identity, savedMatches, finished, lease, job,
+                 formattingWarning, formattingDetails]() mutable {
                     if (!guard || guard->revision != job || guard->lease_ != lease)
                         return;
                     if (!lease || lease->revoked()) {
@@ -519,6 +558,8 @@ void ReaderSession::open(OpenRequest request, std::function<void(OpeningResult)>
                     guard->running = false;
                     guard->frame = result;
                     guard->openingResult_ = outcome;
+                    guard->formattingWarning_ = outcome.ready() && formattingWarning;
+                    guard->formattingDetails_ = guard->formattingWarning_ ? formattingDetails : QJsonObject();
                     guard->desired = result.state;
                     guard->fingerprint = digest;
                     guard->savedMatched = savedMatches;
@@ -569,11 +610,16 @@ void ReaderSession::openPreview(const ReaderSession &source, QSize size, std::fu
     preview_ = true;
     desiredSize = size;
     QPointer<ReaderSession> guard(this);
+    const auto positions = positions_;
     auto engine = model, book = source.model;
+    const auto latest = newest;
     kobalt::qt::invoke(
         engineWorker(),
-        [guard, engine, book, size, finished, lease, job] {
+        [guard, engine, book, size, finished, lease, job, positions, latest] {
             EngineJob activity;
+            if (latest->load() != job) {
+                return;
+            }
             QElapsedTimer timer;
             timer.start();
             diagnostic("preview-start");
@@ -583,8 +629,10 @@ void ReaderSession::openPreview(const ReaderSession &source, QSize size, std::fu
                 result.error = strings::get("error.opening_interrupted");
             else if (!engine->openPreview(*book, size, &error))
                 result.error = error;
-            else
-                result = capture(*engine, false);
+            else if (latest->load() != job) {
+                return;
+            } else
+                result = capture(*engine, positions, false);
             diagnostic("preview-end", {{"elapsed_ms", double(timer.elapsed())}, {"failed", !result.error.isEmpty()}});
             kobalt::qt::invoke(
                 qApp,
@@ -632,8 +680,8 @@ void ReaderSession::apply(const QJsonObject &settings, QSize size) {
     if (resized)
         desiredSize = size;
     if (next != desired || resized) {
-        const auto previousBionic = desired.value("bionic_reading").toString("off");
-        const auto nextBionic = next.value("bionic_reading").toString("off");
+        const auto previousBionic = desired.value("bold_reading").toString("off");
+        const auto nextBionic = next.value("bold_reading").toString("off");
         const auto reason = nextBionic != previousBionic
                                 ? (nextBionic == "off" ? RenderReason::DisableBionic : RenderReason::EnableBionic)
                                 : (next == desired && resized ? RenderReason::PageLayout : RenderReason::Appearance);
@@ -677,7 +725,7 @@ void ReaderSession::setDarkMode(bool enabled) {
     request(true);
 }
 bool ReaderSession::setThickness(int steps) {
-    if (temporaryTypography() || steps < 0 || steps > 8 || desired.value("bionic_reading").toString("off") != "off")
+    if (temporaryTypography() || steps < 0 || steps > 12 || desired.value("bold_reading").toString("off") != "off")
         return false;
     if (steps != thickness()) {
         desired["weight_steps"] = steps;
@@ -689,9 +737,9 @@ bool ReaderSession::setWeight(int steps) {
     if (temporaryTypography())
         return false;
     const auto axis = weightAxis();
-    if (axis.available() ? (steps < axis.minimum || steps > axis.maximum) : (steps < 0 || steps > 8))
+    if (axis.available() ? (steps < axis.minimum || steps > axis.maximum) : (steps < 0 || steps > 12))
         return false;
-    if (desired.value("bionic_reading").toString("off") != "off")
+    if (desired.value("bold_reading").toString("off") != "off")
         return false;
     if (steps != weight()) {
         desired[axis.available() ? "font_weight" : "weight_steps"] = steps;
@@ -782,7 +830,7 @@ bool ReaderSession::goToNative(const QString &location, std::function<void(QStri
             diagnostic("native-import-start");
             QString error;
             engine->goToPlatform(positions, location, &error);
-            auto result = capture(*engine);
+            auto result = capture(*engine, positions);
             diagnostic("native-import-end", {{"failed", !error.isEmpty()}});
             kobalt::qt::invoke(
                 qApp,
@@ -1063,6 +1111,7 @@ void ReaderSession::setChapters(QVector<ChapterTarget> contents, QVector<Chapter
                         return;
                     guard->frame.chapters = result.chapters;
                     guard->frame.chapterGraph = result.chapterGraph;
+                    guard->frame.totalWords = result.totalWords;
                     guard->frame.contentsSelection = result.contentsSelection;
                     guard->frame.graphSelection = result.graphSelection;
                     for (auto it = result.state.begin(); it != result.state.end(); ++it)
@@ -1086,10 +1135,11 @@ void ReaderSession::loadImages() {
     const auto job = revision;
     QPointer<ReaderSession> guard(this);
     const auto lease = lease_;
+    const auto positions = positions_;
     const bool preview = preview_;
     kobalt::qt::invoke(
         engineWorker(),
-        [guard, engine, latest, job, lease, preview] {
+        [guard, engine, latest, job, lease, preview, positions] {
             EngineJob activity;
             ReaderFrame result;
             bool loaded = false;
@@ -1098,7 +1148,7 @@ void ReaderSession::loadImages() {
                 timer.start();
                 loaded = engine->loadNextImage();
                 if (loaded && latest->load() == job)
-                    result = capture(*engine, false);
+                    result = capture(*engine, positions, false);
                 if (loaded)
                     diagnostic("image-load-end",
                                {{"elapsed_ms", double(timer.elapsed())},
@@ -1224,6 +1274,7 @@ void ReaderSession::request(bool appearanceChange, RenderReason reason) {
 void ReaderSession::dispatch(bool pageTurn) {
     running = true;
     turning = pageTurn;
+    const auto positions = positions_;
     const auto requested = desired;
     const auto size = desiredSize;
     const auto anchor = std::exchange(destination, {});
@@ -1234,9 +1285,23 @@ void ReaderSession::dispatch(bool pageTurn) {
     QPointer<ReaderSession> guard(this);
     const auto lease = lease_;
     const auto latest = newest;
-    const auto progress = [guard, job, lease, latest](OpeningStage stage, int percent) {
+    const auto progress = [guard, job, lease, latest, painted = QElapsedTimer(), previousStage = OpeningStage::Styles,
+                           previousPercent = -1](OpeningStage stage, int percent) mutable {
         if (latest->load() != job || !lease || lease->revoked())
             return;
+        percent = qBound(0, percent, 100);
+        const bool changedStage = stage != previousStage;
+        if (int(stage) < int(previousStage) || (!changedStage && percent <= previousPercent)) {
+            return;
+        }
+        // Throttle on the worker before queuing GUI work. Phase boundaries and
+        // completion stay immediate, as they do while opening a book.
+        if (!changedStage && percent != 100 && painted.isValid() && painted.elapsed() < 200) {
+            return;
+        }
+        previousStage = stage;
+        previousPercent = percent;
+        painted.start();
         kobalt::qt::invoke(
             qApp,
             [guard, job, lease, stage, percent] {
@@ -1255,7 +1320,7 @@ void ReaderSession::dispatch(bool pageTurn) {
     };
     kobalt::qt::invoke(
         engineWorker(),
-        [guard, engine, requested, size, anchor, delta, target, job, lease, progress] {
+        [guard, engine, requested, size, anchor, delta, target, job, lease, progress, positions] {
             EngineJob activity;
             QElapsedTimer timer;
             timer.start();
@@ -1287,7 +1352,7 @@ void ReaderSession::dispatch(bool pageTurn) {
             const auto error = result.error;
             // The panel needs far longer to draw a page than the engine does. Hand
             // the frame over first and prepare the neighbour pages after it.
-            result = capture(*engine, false);
+            result = capture(*engine, positions, false);
             if (!error.isEmpty())
                 result.error = error;
             if (!appearanceChanged && anchor.isEmpty() && result.error.isEmpty() && qAbs(delta) == 1 &&

@@ -69,11 +69,11 @@ DictionaryPanel::DictionaryPanel(QWidget *parent) : ui::Panel(parent, Qt::TopEdg
     choicesPaging = new ui::PagerBar(dropdown, "rrDictionaryChoices");
     choicesPaging->counter->setObjectName("rrDictionaryChoicesPages");
     connect(choicesPaging->previous, &QPushButton::clicked, this, [this] {
-        --optionsPage;
+        optionsPage = choicesPaging->turnTarget(-1);
         redrawChoices();
     });
     connect(choicesPaging->next, &QPushButton::clicked, this, [this] {
-        ++optionsPage;
+        optionsPage = choicesPaging->turnTarget(1);
         redrawChoices();
     });
     dropdown->hide();
@@ -287,7 +287,7 @@ void DictionaryPanel::redrawChoices(bool atCurrent) {
                 chosen(id);
         });
     }
-    choicesPaging->setPage(optionsPage, pages.size());
+    choicesPaging->setPage(optionsPage, pages.size(), {}, true);
     choicesPaging->setGeometry(0, y, width(), c::actionHeight);
     dropdown->setGeometry(0, rowTop() + c::actionHeight + m::control::border, width(),
                           y + (pages.size() > 1 ? c::actionHeight : 0) + m::control::border);

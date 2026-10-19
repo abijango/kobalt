@@ -95,6 +95,13 @@ void ResourceCache::evict() {
     entries_.erase(entry);
     ++evictions_;
 }
+bool ResourceCache::resumeAfterInspection() {
+    if (failure_ == Failure::Limit) {
+        error_.clear();
+        failure_ = Failure::None;
+    }
+    return error_.isEmpty();
+}
 ResourceCache::Entry *ResourceCache::ensure(const QString &name, qint64 limit) {
     if (cancelled_ && cancelled_()) {
         error_ = strings::get("error.reading_session_closed");

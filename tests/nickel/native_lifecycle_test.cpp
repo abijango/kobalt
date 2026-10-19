@@ -18,6 +18,18 @@ signals:
     void resumedFromSleep();
 };
 
+class PlugManager : public QObject {
+    Q_OBJECT
+public:
+    static PlugManager *sharedInstance();
+signals:
+    void plugged();
+};
+PlugManager *PlugManager::sharedInstance() {
+    static PlugManager manager;
+    return &manager;
+}
+
 class PlugWorkflowManager : public QObject {
     Q_OBJECT
 public:
@@ -54,10 +66,11 @@ extern "C" void kobalt_hide_sleep_view(void *);
 extern "C" void kobalt_show_sleep_view(void *);
 extern "C" void kobalt_reboot(void *);
 extern "C" void kobalt_power_off(void *, bool);
+extern "C" void kobalt_usb_workflow(void *);
 extern "C" bool kobalt_can_suspend(void *);
 
 namespace {
-int reboots = 0, powerOffs = 0;
+int reboots = 0, powerOffs = 0, usbWorkflows = 0;
 bool lastBatteryLow = false, reenterReboot = false, acceptWake = true, nativeSuspendAllowed = true;
 void reboot(void *manager) {
     ++reboots;
@@ -76,6 +89,9 @@ void showSleep(void *) {
     N3PowerWorkflowManager::sharedInstance()->sleepVisible = true;
 }
 void noOp(void *) {}
+void usbWorkflow(void *) {
+    ++usbWorkflows;
+}
 bool canSuspend(void *) {
     return nativeSuspendAllowed;
 }
@@ -88,7 +104,7 @@ private slots:
         auto *power = N3PowerWorkflowManager::sharedInstance();
         power->asleep = power->sleepVisible = power->pinVisible = false;
         PlugWorkflowManager::sharedInstance()->visible = false;
-        reboots = powerOffs = 0;
+        reboots = powerOffs = usbWorkflows = 0;
         lastBatteryLow = reenterReboot = false;
         acceptWake = nativeSuspendAllowed = true;
         kobalt::engineActivity().pause(false);
@@ -96,6 +112,7 @@ private slots:
         kobalt::nativeHideSleepView = hideSleep;
         kobalt::nativeCanSuspend = canSuspend;
         kobalt::nativeUsbConnect = noOp;
+        kobalt::nativeUsbWorkflow = usbWorkflow;
         kobalt::nativeAboutUsbConnect = noOp;
         kobalt::nativePowerOff = powerOff;
         kobalt::nativeReboot = reboot;
@@ -105,6 +122,72 @@ private slots:
         kobalt::engineActivity().pause(false);
     }
 
+    void usbPromptObservesTheNativeSignalAfterItsSlotsFinish() {
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        bool prompt = false;
+        lifecycle.usbPrompt = [&] {
+            prompt = true;
+        };
+        emit PlugManager::sharedInstance() -> plugged();
+        QVERIFY(lifecycle.usbPromptExpected());
+        QVERIFY(!prompt);
+        QTRY_VERIFY(prompt);
+    }
+
+    void usbWorkflowWaitsForSaveAndRelease() {
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        auto *manager = PlugWorkflowManager::sharedInstance();
+        manager->visible = true;
+        std::function<void()> finish;
+        int preparations = 0;
+        lifecycle.prepareUsb = [&](std::function<void()> ready) {
+            ++preparations;
+            finish = std::move(ready);
+            QVERIFY(kobalt::NativeLifecycle::usbSaveAllowed());
+            QVERIFY(kobalt::NativeLifecycle::suspended());
+        };
+        kobalt_usb_workflow(manager);
+        kobalt_usb_workflow(manager);
+        QCOMPARE(preparations, 1);
+        QCOMPARE(usbWorkflows, 0);
+        QVERIFY(!kobalt::NativeLifecycle::canSuspend());
+        N3PowerWorkflowManager::sharedInstance()->pinVisible = true;
+        QVERIFY(!kobalt::NativeLifecycle::usbSaveAllowed());
+        N3PowerWorkflowManager::sharedInstance()->pinVisible = false;
+        finish();
+        QCOMPARE(usbWorkflows, 1);
+        QVERIFY(!kobalt::NativeLifecycle::usbSaveAllowed());
+        finish();
+        QCOMPARE(usbWorkflows, 1);
+    }
+    void cancelledUsbDoesNotRunLateWorkflow() {
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        std::function<void()> finish;
+        lifecycle.prepareUsb = [&](std::function<void()> ready) {
+            finish = std::move(ready);
+        };
+        kobalt_usb_workflow(PlugWorkflowManager::sharedInstance());
+        kobalt::NativeLifecycle::disconnected();
+        finish();
+        QCOMPARE(usbWorkflows, 0);
+        QVERIFY(!kobalt::NativeLifecycle::usbSaveAllowed());
+    }
+    void shutdownCancelsHeldUsbWorkflow() {
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        std::function<void()> finish;
+        lifecycle.prepareUsb = [&](std::function<void()> ready) {
+            finish = std::move(ready);
+        };
+        lifecycle.prepareShutdown = [](std::function<void()> ready) {
+            ready();
+        };
+        kobalt_usb_workflow(PlugWorkflowManager::sharedInstance());
+        kobalt_reboot(N3PowerWorkflowManager::sharedInstance());
+        finish();
+        QCOMPARE(reboots, 1);
+        QCOMPARE(usbWorkflows, 0);
+        QVERIFY(!kobalt::NativeLifecycle::usbSaveAllowed());
+    }
     void missingTransitionHookLeavesLifecycleDisconnected_data() {
         QTest::addColumn<int>("hook");
         QTest::newRow("show-sleep") << 0;
@@ -114,11 +197,15 @@ private slots:
         QTest::newRow("about-usb-connect") << 4;
         QTest::newRow("power-off") << 5;
         QTest::newRow("reboot") << 6;
+        QTest::newRow("usb-workflow") << 7;
     }
 
     void missingTransitionHookLeavesLifecycleDisconnected() {
         QFETCH(int, hook);
         switch (hook) {
+        case 7:
+            kobalt::nativeUsbWorkflow = nullptr;
+            break;
         case 0:
             kobalt::nativeShowSleepView = nullptr;
             break;
@@ -145,6 +232,76 @@ private slots:
         QVERIFY(!lifecycle.connected());
     }
 
+    void delayedUnlockResumesWithoutAnotherPowerSignal_data() {
+        QTest::addColumn<bool>("usbConnected");
+        QTest::newRow("sleep-overlay") << false;
+        QTest::newRow("usb-remount-after-sleep") << true;
+    }
+    void delayedUnlockResumesWithoutAnotherPowerSignal() {
+        QFETCH(bool, usbConnected);
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        QVERIFY(lifecycle.connected());
+        auto *power = N3PowerWorkflowManager::sharedInstance();
+        auto *usb = PlugWorkflowManager::sharedInstance();
+        int wakes = 0;
+        lifecycle.wake = [&] {
+            ++wakes;
+        };
+        if (usbConnected) {
+            lifecycle.prepareUsb = [](std::function<void()> ready) {
+                ready();
+            };
+            QVERIFY(kobalt::NativeLifecycle::interceptUsb(usb));
+            QVERIFY(lifecycle.storageBlocked());
+        }
+        power->asleep = power->sleepVisible = true;
+        emit power->aboutToSleep();
+        power->asleep = false;
+        emit power->resumedFromSleep();
+        QTest::qWait(20);
+        QCOMPARE(wakes, 0);
+        QVERIFY(lifecycle.blocked());
+        if (usbConnected) {
+            emit usb->aboutToUnplug();
+            emit usb->doneProcessing();
+            QVERIFY(!lifecycle.storageBlocked());
+        }
+        // The native overlay closes after the resume signal has returned.
+        power->sleepVisible = false;
+        QTRY_COMPARE_WITH_TIMEOUT(wakes, 1, 300);
+        QVERIFY(!lifecycle.blocked());
+        QVERIFY(!kobalt::NativeLifecycle::suspended());
+    }
+
+    void wakeWaitsForUsbViewToCloseAfterRemount() {
+        kobalt::NativeLifecycle lifecycle(nullptr);
+        QVERIFY(lifecycle.connected());
+        auto *power = N3PowerWorkflowManager::sharedInstance();
+        auto *usb = PlugWorkflowManager::sharedInstance();
+        int wakes = 0;
+        lifecycle.wake = [&] {
+            ++wakes;
+        };
+        lifecycle.prepareUsb = [](std::function<void()> ready) {
+            ready();
+        };
+        usb->visible = true;
+        QVERIFY(kobalt::NativeLifecycle::interceptUsb(usb));
+        power->asleep = true;
+        emit power->aboutToSleep();
+        power->asleep = false;
+        emit power->resumedFromSleep();
+        QTest::qWait(20);
+        emit usb->aboutToUnplug();
+        emit usb->doneProcessing();
+        QTest::qWait(20);
+        QVERIFY(kobalt::NativeLifecycle::suspended());
+        QCOMPARE(wakes, 0);
+        usb->visible = false;
+        QTRY_COMPARE_WITH_TIMEOUT(wakes, 1, 300);
+        QVERIFY(!lifecycle.blocked());
+    }
+
     void sleepAndPinPreventPrematureResume() {
         kobalt::NativeLifecycle lifecycle(nullptr);
         QVERIFY(lifecycle.connected());
@@ -152,6 +309,7 @@ private slots:
         int sleeps = 0, wakes = 0;
         lifecycle.sleep = [&] {
             ++sleeps;
+            QVERIFY(kobalt::NativeLifecycle::sleepSaveAllowed());
         };
         lifecycle.wake = [&] {
             ++wakes;
@@ -159,6 +317,7 @@ private slots:
         power->asleep = true;
         emit power->aboutToSleep();
         QCOMPARE(sleeps, 1);
+        QVERIFY(!kobalt::NativeLifecycle::sleepSaveAllowed());
         QVERIFY(lifecycle.blocked());
         power->asleep = false;
         power->pinVisible = true;
@@ -249,10 +408,6 @@ private slots:
         lifecycle.draining = true;
         QVERIFY(!kobalt_can_suspend(nullptr));
         lifecycle.draining = false;
-        kobalt::NativeLifecycle::deferSuspend(true);
-        QVERIFY(!kobalt_can_suspend(nullptr));
-        kobalt::NativeLifecycle::deferSuspend(false);
-        QVERIFY(kobalt_can_suspend(nullptr));
         nativeSuspendAllowed = false;
         QVERIFY(!kobalt_can_suspend(nullptr));
     }

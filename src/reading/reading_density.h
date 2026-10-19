@@ -20,7 +20,7 @@ inline int minimumFontPixels() {
     return qRound(7 * readingPpi.load() / 72.0);
 }
 inline int maximumFontPixels() {
-    return qRound(20 * readingPpi.load() / 72.0);
+    return qRound(48 * readingPpi.load() / 72.0);
 }
 inline int defaultMarginPixels() {
     return readingPixels(48);
@@ -35,7 +35,7 @@ inline int defaultVerticalMarginPixels(int sideMargin) {
 // The text size control counts half points, so a size reads the same on every
 // screen: 21 is 10.5 pt, 44 pixels at 300 ppi. The range stays inside the pixel
 // limits above on every density.
-inline constexpr int minimumHalfPoints = 14, maximumHalfPoints = 40;
+inline constexpr int minimumHalfPoints = 14, maximumHalfPoints = 96;
 inline int halfPointPixels(int halfPoints) {
     return qRound(halfPoints * readingPpi.load() / 144.0);
 }

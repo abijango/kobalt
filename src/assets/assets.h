@@ -18,6 +18,9 @@ public:
     // Capture verified metadata without retaining font bytes or this bundle.
     // The reader checks the file again when it is first needed.
     std::function<QByteArray()> deferredFontData(const QString &name) const;
+    // Checks one font against the manifest without verifying the whole bundle
+    // first. After a full verification, this is the same as fontData().
+    QByteArray manifestFontData(const QString &name) const;
     const QString &root() const;
 
 private:

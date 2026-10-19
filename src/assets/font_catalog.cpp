@@ -1,5 +1,6 @@
 #include "font_catalog.h"
 #include <QDir>
+#include <QFile>
 #include <QMap>
 #include <algorithm>
 #include <ft2build.h>
@@ -7,9 +8,47 @@
 #include FT_MULTIPLE_MASTERS_H
 
 namespace kobalt {
+namespace {
+// Sideloaded families often keep their own folder, and downloaded families
+// often nest their files one level further, as in Family/static/. Hidden
+// entries, such as macOS `._` files and `.Trashes`, are skipped.
+constexpr int sideloadFolderDepth = 2;
+
+void collectSideloadedFonts(const QDir &directory, int depth, QStringList &result) {
+    for (const auto &name : directory.entryList({"*.ttf", "*.otf"}, QDir::Files, QDir::Name)) {
+        const auto path = directory.filePath(name);
+        QFile font(path);
+        if (!font.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        // Kobo can place its own wrapped fonts here, as in fonts/kobo/.
+        // FreeType cannot read them, and only firmware fonts are decoded.
+        const auto header = font.peek(3);
+        if (header == "QTE" || header == "QTD") {
+            continue;
+        }
+        result.append(path);
+    }
+    if (depth >= sideloadFolderDepth) {
+        return;
+    }
+    for (const auto &name : directory.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        collectSideloadedFonts(QDir(directory.filePath(name)), depth + 1, result);
+    }
+}
+}
+QStringList sideloadedFontFiles(const QString &directory) {
+    if (directory.isEmpty()) {
+        return {};
+    }
+    QStringList result;
+    collectSideloadedFonts(QDir(directory), 0, result);
+    return result;
+}
 bool FontSources::operator==(const FontSources &other) const {
     return bundled == other.bundled && systemDirectory == other.systemDirectory &&
-           sideloadDirectory == other.sideloadDirectory && removableRoot == other.removableRoot;
+           sideloadDirectory == other.sideloadDirectory && removableRoot == other.removableRoot &&
+           systemFiles == other.systemFiles;
 }
 bool EngineFontInputs::operator==(const EngineFontInputs &other) const {
     return sources == other.sources && fallbackFiles == other.fallbackFiles &&
@@ -109,13 +148,17 @@ QVector<ReadingFont> discoverReadingFonts(const FontSources &sources) {
     for (const auto &path : sources.bundled)
         if (core(path))
             add(path, FontOrigin::Recommended);
-    for (const auto &source : {qMakePair(sources.systemDirectory, FontOrigin::BuiltIn),
-                               qMakePair(sources.sideloadDirectory, FontOrigin::Sideloaded)}) {
-        if (source.first.isEmpty())
-            continue;
-        const QDir directory(source.first);
-        for (const auto &name : directory.entryList({"*.ttf", "*.otf"}, QDir::Files, QDir::Name))
-            add(directory.filePath(name), source.second);
+    for (const auto &path : sources.systemFiles) {
+        add(path, FontOrigin::BuiltIn);
+    }
+    if (!sources.systemDirectory.isEmpty()) {
+        const QDir directory(sources.systemDirectory);
+        for (const auto &name : directory.entryList({"*.ttf", "*.otf"}, QDir::Files, QDir::Name)) {
+            add(directory.filePath(name), FontOrigin::BuiltIn);
+        }
+    }
+    for (const auto &path : sideloadedFontFiles(sources.sideloadDirectory)) {
+        add(path, FontOrigin::Sideloaded);
     }
     // The UI family remains available for renderer-generated image notices,
     // but it is not a recommended reading font from the Core Collection.

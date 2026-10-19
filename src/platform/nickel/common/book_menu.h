@@ -7,8 +7,11 @@ namespace kobalt {
 bool previewBook(const void *volume);
 enum class ReaderBookRoute { Unsupported, Direct, Protected, Failed, Remembered };
 ReaderBookRoute readerBookRoute(const void *volume, QString *identity = nullptr, QString *path = nullptr);
+// Check the format and local path without opening the EPUB. The accepted
+// opening performs full inspection after its loading view has painted.
+ReaderBookRoute readerBookCandidateRoute(const void *volume, QString *identity = nullptr, QString *path = nullptr);
 void rememberNativeBook(const QString &identity, const QString &path, bool protectedBook);
-// Use the same eligibility check for library menus and accepted openings.
+// The library menu requires full inspection before offering a Kobalt choice.
 bool eligibleReaderBook(const void *volume, QString *identity = nullptr, QString *path = nullptr);
 void configureBookMenu(std::function<bool()> available, std::function<bool()> preferred);
 bool readerChoice(const void *volume, bool preferred);

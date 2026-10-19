@@ -19,12 +19,35 @@ void AppearanceEditSession::open(ReaderSession &main, QSize viewport, std::funct
             return;
         guard->previewState_ = error.isEmpty() ? PreviewState::Ready : PreviewState::Failed;
         guard->error_ = std::move(error);
+        if (guard->ready()) {
+            auto changes = std::move(guard->pendingChanges_);
+            guard->pendingChanges_.clear();
+            for (const auto &change : changes)
+                change(*guard->preview_);
+        } else
+            guard->pendingChanges_.clear();
         if (opened)
             opened();
     });
 }
+void AppearanceEditSession::mutate(ReaderSession &main, QSize viewport, std::function<void()> changed,
+                                   std::function<void()> opened, std::function<void(ReaderSession &)> operation) {
+    if (previewState_ == PreviewState::Failed) {
+        resetPreview();
+    }
+    edited_ = true;
+    if (ready()) {
+        operation(*preview_);
+        return;
+    }
+    pendingChanges_.push_back(std::move(operation));
+    if (!preview_)
+        open(main, viewport, std::move(changed), std::move(opened));
+}
 void AppearanceEditSession::resetPreview() {
     ++generation_;
+    pendingChanges_.clear();
+    edited_ = false;
     if (preview_)
         preview_->updated = {};
     preview_.reset();
@@ -32,6 +55,7 @@ void AppearanceEditSession::resetPreview() {
 }
 void AppearanceEditSession::discard() {
     resetPreview();
+    setPanelOpen(false);
     clearDestination();
     applyState_ = ApplyState::Idle;
     retention_ = Retention::Release;
@@ -70,12 +94,16 @@ void AppearanceEditSession::completeApply(bool successful, bool exiting) {
     Q_ASSERT(applying());
     applyState_ = ApplyState::Idle;
     if (successful) {
+        if (!appearanceDestination())
+            setPanelOpen(false);
         if (!appearanceDestination() || retention_ != Retention::Reuse)
             resetPreview();
     } else {
         cancelNavigation();
-        if (exiting)
+        if (exiting) {
             resetPreview();
+            setPanelOpen(false);
+        }
     }
     retention_ = Retention::Release;
 }

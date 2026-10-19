@@ -90,6 +90,20 @@ def russian_book(path):
            '<itemref idref="text.xhtml"/>')
 
 
+def hyphenation_books(directory):
+    """Package language selects each added dictionary, including regional tags."""
+    words = {
+        'et-EE': 'rahvusvaheline', 'fi-FI': 'kirjallisuus', 'ka-GE': 'საქართველო',
+        'hu-HU': 'Magyarország', 'lt-LT': 'universitetas', 'lv-LV': 'universitāte',
+        'pl-PL': 'przedstawienie', 'sk-SK': 'medzinárodného', 'sl-SI': 'slovenščina',
+        'uk-UA': 'література',
+    }
+    for language, word in words.items():
+        _write(directory / f'hyphenation-{language}.epub', language, 'Hyphenation',
+               [('text.xhtml', 'application/xhtml+xml', _xhtml('<p>' + (word + ' ') * 80 + '</p>'))],
+               '<itemref idref="text.xhtml"/>')
+
+
 def equations_book(path):
     """Font-relative SVG equations, separate from ordinary coloured artwork."""
     svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect width="400" height="200" fill="#d02030"/></svg>'
@@ -111,3 +125,26 @@ def embedded_fonts_book(path, font):
     html = html.replace('</head>', '<link rel="stylesheet" href="fonts.css"/></head>')
     _write(path, 'en', 'Embedded fonts', [('text.xhtml', 'application/xhtml+xml', html),
            ('fonts.css', 'text/css', css), ('font.ttf', 'font/ttf', font.read_bytes())], '<itemref idref="text.xhtml"/>')
+
+
+def font_families_book(path, font=None):
+    """Each CSS family starts a page so checks can inspect its rendered face."""
+    css = ('p,pre{page-break-before:always;text-indent:0}'
+           '.serif{font-family:serif}.sans{font-family:sans-serif}'
+           '.mono{font-family:monospace}.named{font-family:"IBM Plex Sans",serif}'
+           '.embedded{font-family:Embedded,serif}')
+    body = ('<p class="serif">Serifmarker family text.</p>'
+            '<p class="sans">Sansmarker family text.</p>'
+            '<pre class="mono">Monomarker family text.</pre>'
+            '<p class="named">Namedmarker family text.</p>')
+    html = _xhtml(body).replace('</head>', '<link rel="stylesheet" href="fonts.css"/></head>')
+    items = [('text.xhtml', 'application/xhtml+xml', html), ('fonts.css', 'text/css', css)]
+    spine = '<itemref idref="text.xhtml"/>'
+    if font:
+        embedded = _xhtml('<p class="embedded">Embeddedmarker family text.</p>')
+        embedded = embedded.replace('</head>', '<link rel="stylesheet" href="embedded.css"/></head>')
+        items.extend([('embedded.xhtml', 'application/xhtml+xml', embedded),
+                      ('embedded.css', 'text/css', '@font-face{font-family:Embedded;src:url(font.ttf)}' + css),
+                      ('font.ttf', 'font/ttf', font.read_bytes())])
+        spine += '<itemref idref="embedded.xhtml"/>'
+    _write(path, 'en', 'Font family defaults', items, spine)

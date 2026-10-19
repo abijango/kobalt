@@ -36,16 +36,16 @@ protected:
             return;
         // One scale for the whole book, so a chapter keeps its height on every
         // page. A single outlier is capped instead of flattening the others.
-        QVector<int> counts;
-        int maximum = 1;
+        QVector<qint64> counts;
+        qint64 maximum = 1;
         for (const auto &chapter : chapters)
             if (chapter.words > 0) {
                 counts.append(chapter.words);
                 maximum = qMax(maximum, chapter.words);
             }
         std::sort(counts.begin(), counts.end());
-        const qint64 cap = counts.isEmpty() ? maximum : qint64(counts[counts.size() / 2]) * m::scaleCap;
-        const int scale = int(qMax<qint64>(1, qMin<qint64>(maximum, cap)));
+        const double cap = counts.isEmpty() ? double(maximum) : double(counts[counts.size() / 2]) * m::scaleCap;
+        const double scale = qMax(1.0, qMin(double(maximum), cap));
         const int chart = m::barsHeight;
         const int barWidth = qBound(1, (width() - (visible - 1) * gap) / visible, int(m::maximumBarWidth));
         const int used = visible * barWidth + (visible - 1) * gap;
@@ -54,9 +54,9 @@ protected:
             return offset + (index - first) * (barWidth + gap);
         };
         for (int i = first; i < first + visible; ++i) {
-            const int words = qMax(0, chapters[i].words);
+            const qint64 words = qMax<qint64>(0, chapters[i].words);
             const bool capped = words > scale;
-            const int height = capped ? chart : qMax(2, int(qint64(words) * chart / scale));
+            const int height = capped ? chart : qMax(2, int(double(words) * chart / scale));
             const QRect bar(left(i), chart - height, barWidth, height);
             if (selection.current >= 0 && i < selection.current) {
                 painter.fillRect(bar, ink);
@@ -74,9 +74,6 @@ protected:
                     }
                 }
             }
-            // A notch near the top marks a bar that is taller than the chart.
-            if (capped)
-                painter.fillRect(bar.left(), bar.top() + m::capNotchTop, bar.width(), m::capNotch, paper);
         }
         painter.setFont(ui::captionFont());
         const auto metrics = painter.fontMetrics();
@@ -230,13 +227,13 @@ ChapterGraph::ChapterGraph(QWidget *parent) : Panel(parent, Qt::BottomEdge) {
     pager->next->setAccessibleName(strings::get("chapter_contents.next_chapters"));
     connect(pager->previous, &QPushButton::clicked, this, [this] {
         first = qMax(0, first - capacity());
-        redraw();
+        redraw(true);
         if (changed)
             changed();
     });
     connect(pager->next, &QPushButton::clicked, this, [this] {
         first += capacity();
-        redraw();
+        redraw(true);
         if (changed)
             changed();
     });
@@ -249,7 +246,12 @@ ChapterGraph::ChapterGraph(QWidget *parent) : Panel(parent, Qt::BottomEdge) {
 }
 void ChapterGraph::setProgress(const QString &title, int chapterPage, int chapterPages, int nextChapterPages, int page,
                                int pages) {
+    if (this->title == title && progress.chapterPage == chapterPage && progress.chapterPages == chapterPages &&
+        progress.nextChapterPages == nextChapterPages && progress.page == page && progress.pages == pages &&
+        progressWeight == ui::interfaceWeight())
+        return;
     this->title = title;
+    progressWeight = ui::interfaceWeight();
     progress = {chapterPage, chapterPages, nextChapterPages, page, pages};
     chapterTitle->setAccessibleName(strings::get("chapter_graph.current_chapter").arg(title));
     this->chapterPage->setText(
@@ -348,6 +350,17 @@ int ChapterGraph::graphPages() const {
 }
 void ChapterGraph::setData(QVector<ChapterLink> chapters, ChapterSelection selection, bool ready,
                            const QString &error) {
+    const bool sameChapters = chapters.size() == this->chapters.size() &&
+                              std::equal(chapters.cbegin(), chapters.cend(), this->chapters.cbegin(),
+                                         [](const ChapterLink &left, const ChapterLink &right) {
+                                             return left.title == right.title && left.position == right.position &&
+                                                    left.page == right.page && left.depth == right.depth &&
+                                                    left.words == right.words;
+                                         });
+    if (sameChapters && selection.current == this->selection.current && selection.next == this->selection.next &&
+        selection.page == this->selection.page && selection.pages == this->selection.pages && ready == this->ready &&
+        error == this->error)
+        return;
     const bool moved = selection.current != this->selection.current || chapters.size() != this->chapters.size();
     this->chapters = std::move(chapters);
     this->selection = selection;
@@ -406,7 +419,7 @@ void ChapterGraph::arrange() {
     }
 }
 
-void ChapterGraph::redraw() {
+void ChapterGraph::redraw(bool paging) {
     first = qBound(0, first / capacity(), graphPages() - 1) * capacity();
     const bool available = ready && error.isEmpty() && !chapters.isEmpty();
     bars->setVisible(available);
@@ -430,6 +443,7 @@ void ChapterGraph::redraw() {
                                 .arg(qMin(first + capacity(), int(chapters.size())))
                                 .arg(chapters.size()));
     bars->update();
-    update();
+    if (!paging)
+        update();
 }
 }

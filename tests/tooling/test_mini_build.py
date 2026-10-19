@@ -1,6 +1,8 @@
 """Check mini package contents, isolation and the attachment size limit."""
 import hashlib
 import json
+import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -82,14 +84,21 @@ class MiniBuildTests(unittest.TestCase):
                 self.assertEqual(str(mini), str(full) + '-mini')
 
     @unittest.skipUnless(FONTTOOLS.is_dir(), 'Pinned FontTools is not cached')
-    def test_cjk_keeps_every_face_mapping_metric_and_outline(self):
+    def test_cjk_keeps_every_face_mapping_and_metric(self):
         sys.path.insert(0, str(FONTTOOLS))
         from fontTools.ttLib import TTCollection
-        from fontTools.pens.recordingPen import RecordingPen
         generated = mini_fonts.prepare(ROOT)
-        with TTCollection(ROOT / 'resources/fonts' / mini_fonts.CJK) as original, TTCollection(generated) as mini:
+        with TTCollection(ROOT / 'resources/fonts' / mini_fonts.CJK, lazy=True) as original, TTCollection(generated, lazy=True) as mini:
             self.assertEqual(len(original.fonts), 5)
             self.assertEqual(len(mini.fonts), 5)
+            for collection in (original, mini):
+                records = [font.reader.tables['CFF '] for font in collection.fonts]
+                self.assertEqual(len({(table.offset, table.length) for table in records}), 1)
+                cff = collection.fonts[0]['CFF ']
+                order = collection.fonts[0].getGlyphOrder()
+                for font in collection.fonts:
+                    font['CFF '] = cff
+                    font.setGlyphOrder(order)
             for before, after in zip(original.fonts, mini.fonts):
                 self.assertEqual(before.getGlyphOrder(), after.getGlyphOrder())
                 self.assertEqual(before.getBestCmap(), after.getBestCmap())
@@ -97,13 +106,63 @@ class MiniBuildTests(unittest.TestCase):
                 for tag in before.keys():
                     if tag not in ('GlyphOrder', 'CFF ', 'head'):
                         self.assertEqual(before.getTableData(tag), after.getTableData(tag), tag)
-            before = original.fonts[0].getGlyphSet()
-            after = mini.fonts[0].getGlyphSet()
-            for name in original.fonts[0].getGlyphOrder():
+
+    @unittest.skipUnless(FONTTOOLS.is_dir(), 'Pinned FontTools is not cached')
+    def test_cjk_keeps_every_outline(self):
+        sys.path.insert(0, str(FONTTOOLS))
+        from fontTools.ttLib import TTFont
+        from fontTools.pens.recordingPen import RecordingPen
+        generated = mini_fonts.prepare(ROOT)
+        checker = os.environ.get('KOBALT_TEST_OUTLINE_CHECK')
+        if checker:
+            subprocess.run([checker, str(ROOT / 'resources/fonts' / mini_fonts.CJK), str(generated)], check=True)
+            return
+        # Direct Python runs retain the independent FontTools comparison.
+        # All five faces share these outlines, as the metadata check verifies.
+        with TTFont(ROOT / 'resources/fonts' / mini_fonts.CJK, fontNumber=0, lazy=True) as original, \
+                TTFont(generated, fontNumber=0, lazy=True) as mini:
+            before = original.getGlyphSet()
+            after = mini.getGlyphSet()
+            for name in original.getGlyphOrder():
                 left, right = RecordingPen(), RecordingPen()
                 before[name].draw(left)
                 after[name].draw(right)
                 self.assertEqual(left.value, right.value, name)
+
+    @unittest.skipUnless(FONTTOOLS.is_dir() and os.environ.get('KOBALT_TEST_OUTLINE_CHECK'), 'Native outline checker is not configured')
+    def test_outline_checker_rejects_changed_geometry(self):
+        sys.path.insert(0, str(FONTTOOLS))
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.t2CharStringPen import T2CharStringPen
+        def font(path, width):
+            builder = FontBuilder(1000, isTTF=False)
+            builder.setupGlyphOrder(['.notdef', 'shape'])
+            builder.setupCharacterMap({65: 'shape'})
+            builder.setupHorizontalMetrics({name: (600, 0) for name in ('.notdef', 'shape')})
+            builder.setupHorizontalHeader(ascent=800, descent=-200)
+            builder.setupNameTable({'familyName': 'Outline fixture', 'styleName': 'Regular', 'psName': 'OutlineFixture'})
+            builder.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200)
+            builder.setupPost()
+            empty = T2CharStringPen(600, None).getCharString()
+            pen = T2CharStringPen(600, None)
+            pen.moveTo((0, 0))
+            pen.lineTo((width, 0))
+            pen.lineTo((width, 100))
+            pen.closePath()
+            builder.setupCFF('OutlineFixture', {'FullName': 'Outline fixture', 'FamilyName': 'Outline fixture', 'Weight': 'Regular'},
+                             {'.notdef': empty, 'shape': pen.getCharString()}, {})
+            builder.setupMaxp()
+            builder.save(path)
+        checker = os.environ['KOBALT_TEST_OUTLINE_CHECK']
+        with tempfile.TemporaryDirectory() as temporary:
+            original, changed = Path(temporary) / 'original.otf', Path(temporary) / 'changed.otf'
+            font(original, 100)
+            font(changed, 101)
+            same = subprocess.run([checker, str(original), str(original)], capture_output=True, text=True)
+            self.assertEqual(same.returncode, 0, same.stderr)
+            different = subprocess.run([checker, str(original), str(changed)], capture_output=True, text=True)
+            self.assertNotEqual(different.returncode, 0)
+            self.assertIn('glyph 1', different.stderr)
 
 
 if __name__ == '__main__':

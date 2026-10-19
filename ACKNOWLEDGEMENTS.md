@@ -48,7 +48,7 @@ Dependency revisions and checksums are recorded in [dependencies/manifest.json](
 | [Instrument Serif](https://github.com/Instrument/instrument-serif) | The Instrument Serif Project Authors. | Loading-screen wordmark and caption. | [Instrument Serif](resources/notices/Instrument-Serif-OFL) |
 | [eBook Fonts](https://github.com/nicoverbruggen/ebook-fonts) | Nico Verbruggen, collection and font adaptations; original font authors listed below. | Reading fonts listed below. | [Font credits](resources/notices/eBook-Fonts), [Atkinson Hyperlegible Next](resources/notices/Atkinson-Hyperlegible-Next-OFL), [Domitian](resources/notices/Domitian) |
 | [Lucide](https://github.com/lucide-icons/lucide) and [Feather](https://github.com/feathericons/feather) | The Lucide contributors; Cole Bemis and the Feather contributors for Feather-derived artwork. | Reader interface icons. | [Lucide and Feather](resources/notices/Lucide) |
-| [TeX hyphenation](https://github.com/hyphenation/tex-hyphen), [wortliste](https://repo.or.cz/wortliste.git), [LibreOffice dictionaries](https://github.com/LibreOffice/dictionaries) and [TeX Users Group exceptions](https://ctan.org/tex-archive/info/digests/tugboat/hyphenex) | The TeX hyphenation, wortliste, LibreOffice dictionary and TeX Users Group authors; conversions by the KOReader contributors. Individual pattern authors are listed below. | English, German, Dutch, French, Spanish, Italian and Portuguese hyphenation patterns. | [Pattern credits and licenses](resources/notices/Hyphenation-patterns) |
+| [TeX hyphenation](https://github.com/hyphenation/tex-hyphen), [wortliste](https://repo.or.cz/wortliste.git), [LibreOffice dictionaries](https://github.com/LibreOffice/dictionaries) and [TeX Users Group exceptions](https://ctan.org/tex-archive/info/digests/tugboat/hyphenex) | The TeX hyphenation, wortliste, LibreOffice dictionary and TeX Users Group authors; conversions by the KOReader contributors. Individual pattern authors are listed below. | Bundled hyphenation patterns. | [Pattern credits and licenses](resources/notices/Hyphenation-patterns) |
 
 Nico Verbruggen maintains the eBook Fonts collection and its NV font adaptations. The original font designs remain credited to their authors below:
 
@@ -78,6 +78,16 @@ The individual hyphenation pattern credits are preserved in the [pattern notices
 | Italian | Claudio Beccari. |
 | Portuguese | Pedro J. de Rezende and J. Joao Dias Almeida. |
 | Brazilian Portuguese | Raimundo Santos Moura. |
+| Estonian | Enn Saar. |
+| Finnish | Kauko Saarinen. |
+| Georgian | Levan Shoshiashvili. |
+| Hungarian | Bence Nagy. |
+| Lithuanian | Sigitas Tolušis and Yannis Haralambous; original patterns by Vytas Statulevičius. |
+| Latvian | Janis Vilims. |
+| Polish | Hanna Kołodziejska, Bogusław Jackowski and Marek Ryćko; conversion and corrections by Artur Polaczyński. |
+| Slovak | Jana Chlebíková. |
+| Slovenian | Matjaž Vrečko. |
+| Ukrainian | Maksym Polyakov. |
 
 The [font manifests](resources/fonts/) and [icon manifest](resources/icons/lucide/manifest.json) record source revisions and checksums.
 

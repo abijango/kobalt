@@ -51,18 +51,98 @@ int main(int argc, char **argv) {
                 qPrintable(error));
         require(model.embeddedFontCount() == 0, "Unembedded book reported publisher fonts");
         const auto lead = find(model, "Linear text continues");
-        require(!lead.isEmpty() && model.goTo(lead.first().start) &&
-                    model.textFontFace() == kobalt::test::alternateReadingFace(),
-                "Publisher Fonts ignored the custom fallback");
+        require(!lead.isEmpty() && model.goTo(lead.first().start) && model.textFontFace() == "Libron",
+                "The default book override changed Publisher Fonts");
         require(model.applyAppearance(kobalt::qt::object({{"default_font_face", "Libron"}})),
-                "Cannot restore publisher fallback");
+                "Cannot change default book override");
         require(model.state()["font_face"].toString().isEmpty(), "Default change replaced Publisher Fonts selection");
-        require(model.textFontFace() == "Libron", "Publisher fallback did not change");
+        require(model.textFontFace() == "Libron", "Default book override changed the fixed publisher fallback");
         const auto path =
             QFileInfo(QString::fromLocal8Bit(argv[1])).absoluteDir().filePath("embedded-fonts.epub").toLocal8Bit();
         require(model.open(read(path.constData()), size, kobalt::qt::object({{"font_face", ""}}), &error),
                 qPrintable(error));
         require(model.embeddedFontCount() == 1, "Embedded count included styles, local aliases or missing fonts");
+    }
+
+    {
+        const auto path =
+            QFileInfo(QString::fromLocal8Bit(argv[1])).absoluteDir().filePath("font-families.epub").toLocal8Bit();
+        kobalt::ReaderModel model(kobalt::test::readerFonts());
+        require(model.open(read(path.constData()), size, kobalt::qt::object({{"font_face", ""}}), &error),
+                qPrintable(error));
+        const auto checkFace = [&](const QString &word, const QString &expected) {
+            const auto hits = find(model, word);
+            require(hits.size() == 1, qPrintable(word + " has " + QString::number(hits.size()) + " search hits"));
+            require(model.goTo(hits.first().start), qPrintable("Cannot locate " + word));
+            require(model.textFontFace() == expected,
+                    qPrintable(word + " used " + model.textFontFace() + " instead of " + expected));
+        };
+        checkFace("Serifmarker", "Libron");
+        checkFace("Sansmarker", model.fontFaces().contains(kobalt::publisherSansFontFace)
+                                    ? QString(kobalt::publisherSansFontFace)
+                                    : QString("IBM Plex Sans"));
+        checkFace("Monomarker", "IBM Plex Mono");
+        checkFace("Namedmarker", "IBM Plex Sans");
+        require(
+            model.applyAppearance(kobalt::qt::object({{"default_font_face", kobalt::test::alternateReadingFace()}})),
+            "Cannot change the default book override");
+        checkFace("Serifmarker", "Libron");
+        checkFace("Sansmarker", model.fontFaces().contains(kobalt::publisherSansFontFace)
+                                    ? QString(kobalt::publisherSansFontFace)
+                                    : QString("IBM Plex Sans"));
+        checkFace("Monomarker", "IBM Plex Mono");
+        checkFace("Namedmarker", "IBM Plex Sans");
+        const auto saved = model.state();
+        require(model.open(read(path.constData()), size, saved, &error), qPrintable(error));
+        checkFace("Serifmarker", "Libron");
+        checkFace("Sansmarker", model.fontFaces().contains(kobalt::publisherSansFontFace)
+                                    ? QString(kobalt::publisherSansFontFace)
+                                    : QString("IBM Plex Sans"));
+        require(model.applyAppearance(kobalt::qt::object({{"font_face", kobalt::test::alternateReadingFace()}})),
+                "Cannot select an explicit reading font");
+        QVector<QImage> explicitPages;
+        for (int page = 0; page < model.pages(); ++page) {
+            explicitPages.append(model.image(page));
+        }
+        checkFace("Serifmarker", kobalt::test::alternateReadingFace());
+        checkFace("Sansmarker", kobalt::test::alternateReadingFace());
+        checkFace("Namedmarker", kobalt::test::alternateReadingFace());
+        require(model.applyAppearance(kobalt::qt::object({{"default_font_face", "Libron"}})),
+                "Cannot change the default alongside an explicit reading font");
+        require(model.pages() == explicitPages.size(), "Default changes repaginated an explicit override");
+        for (int page = 0; page < model.pages(); ++page) {
+            require(model.image(page) == explicitPages[page], "Default changes replaced an explicit override");
+        }
+        require(model.open(read(path.constData()), size,
+                           kobalt::qt::object({{"font_face", "Missing face"},
+                                               {"default_font_face", kobalt::test::alternateReadingFace()}}),
+                           &error),
+                qPrintable(error));
+        require(model.fontFace() == kobalt::test::alternateReadingFace(),
+                "Missing explicit reading font ignored the default book override");
+        const auto embeddedPath = QFileInfo(QString::fromLocal8Bit(argv[1]))
+                                      .absoluteDir()
+                                      .filePath("font-families-embedded.epub")
+                                      .toLocal8Bit();
+        require(model.open(read(embeddedPath.constData()), size, kobalt::qt::object({{"font_face", ""}}), &error),
+                qPrintable(error));
+        require(model.embeddedFontCount() == 1, "Embedded fixture did not register its font");
+        QVector<QImage> originalPages;
+        for (int page = 0; page < model.pages(); ++page) {
+            originalPages.append(model.image(page));
+        }
+        require(
+            model.applyAppearance(kobalt::qt::object({{"default_font_face", kobalt::test::alternateReadingFace()}})),
+            "Cannot save defaults while publisher fonts are present");
+        require(model.pages() == originalPages.size(), "Defaults repaginated a book with embedded fonts");
+        for (int page = 0; page < model.pages(); ++page) {
+            require(model.image(page) == originalPages[page], "Defaults changed a book with embedded fonts");
+        }
+        require(model.go(0), "Cannot locate embedded book preview");
+        kobalt::ReaderModel preview(kobalt::test::readerFonts());
+        require(preview.openPreview(model, size, &error), qPrintable(error));
+        require(preview.embeddedFontCount() == 1 && preview.image(0) == model.image(0),
+                "Preview lost the full publication's embedded-font gate");
     }
 
     {
@@ -155,7 +235,17 @@ int main(int argc, char **argv) {
         require(second.contains("Note two stands alone.") && !second.contains("Closingword"),
                 "A note ran past the next heading");
 
-        // Page turns skip the footnote aside and the non-linear spine item.
+        require(!model.state().value("hide_nonlinear_fragments").toBool(),
+                "Non-linear fragments are hidden by default");
+        for (int page = 0; page < model.pages(); ++page) {
+            require(model.turnTarget(page, 1) == qMin(page + 1, model.pages() - 1),
+                    "Default forward paging skipped a physical page");
+            require(model.turnTarget(page, -1) == qMax(page - 1, 0), "Default backward paging skipped a physical page");
+        }
+        require(model.applyAppearance(kobalt::qt::object({{"hide_nonlinear_fragments", true}})),
+                "Cannot enable hiding non-linear fragments");
+        require(model.state().value("hide_nonlinear_fragments").toBool(), "Hiding setting was not retained");
+        // Hiding skips the footnote aside and the non-linear spine item.
         int page = 0;
         QStringList seen;
         bool checkedSkippedCache = false;
@@ -194,6 +284,9 @@ int main(int argc, char **argv) {
         const auto aside = find(model, "Asidetext");
         require(aside.size() == 1 && model.goTo(aside.first().start), "The footnote aside cannot be opened directly");
         require(model.turnTarget(model.page(), 1) != model.page(), "A turn inside a non-linear section is stuck");
+        require(model.applyAppearance(kobalt::qt::object({{"hide_nonlinear_fragments", false}})),
+                "Cannot disable hiding non-linear fragments");
+        require(model.turnTarget(1, -1) == 0, "Cannot turn back to the first physical page");
         require(model.state().value("dom_version").toInt() > 20260000, "A new book does not record its DOM version");
     }
     {
@@ -230,6 +323,33 @@ int main(int argc, char **argv) {
         require(text(TextLangMan::getMainLang()) == "ru", "The Russian package language was not applied");
         require(text(TextLangMan::getTextLangCfg()->getHyphMethod()->getId()) == "@algorithm",
                 "Russian lost algorithmic hyphenation");
+    }
+    {
+        const auto directory = QFileInfo(QString::fromLocal8Bit(argv[1])).absoluteDir();
+        const QMap<QString, QString> dictionaries = {
+            {"et-EE", "Estonian"},   {"fi-FI", "Finnish"},  {"ka-GE", "Georgian"}, {"hu-HU", "Hungarian"},
+            {"lt-LT", "Lithuanian"}, {"lv-LV", "Latvian"},  {"pl-PL", "Polish"},   {"sk-SK", "Slovak"},
+            {"sl-SI", "Slovenian"},  {"uk-UA", "Ukrainian"}};
+        for (auto entry = dictionaries.cbegin(); entry != dictionaries.cend(); ++entry) {
+            kobalt::ReaderModel model(kobalt::test::readerFonts());
+            const auto path = directory.filePath("hyphenation-" + entry.key() + ".epub").toLocal8Bit();
+            require(model.open(read(path.constData()), QSize(320, 720),
+                               kobalt::qt::object({{"hyphenation", "on"}, {"text_alignment", "justify"}}), &error),
+                    qPrintable(error));
+            require(text(TextLangMan::getMainLang()) == entry.key(), "Package language was not applied");
+            auto *method = TextLangMan::getTextLangCfg()->getHyphMethod();
+            require(text(method->getId()) == entry.value() + ".pattern",
+                    qPrintable(entry.key() + " did not select its dictionary"));
+            require(method->getCount() > 0, "Selected dictionary has no loaded patterns");
+            require(
+                text(TextLangMan::getTextLangCfg(lString32("hu"))->getHyphMethod()->getId()) == "Hungarian.pattern" &&
+                    text(TextLangMan::getTextLangCfg(lString32("pl"))->getHyphMethod()->getId()) == "Polish.pattern",
+                "Inline language selection lost Hungarian or Polish patterns");
+            const auto hyphenated = model.image(model.page());
+            require(model.setHyphenation("off"), "Cannot disable hyphenation");
+            require(model.image(model.page()) != hyphenated,
+                    qPrintable(entry.key() + " hyphenation did not change wrapping"));
+        }
     }
     {
         QMap<QString, QImage> pages;

@@ -26,12 +26,16 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this);
-        painter.setPen(QPen(palette().color(QPalette::Mid), ui::metrics::control::border));
+        const int border = ui::metrics::control::border;
+        const auto ink = palette().color(QPalette::Mid);
         const int status = property("status_height").toInt();
         if (status)
-            painter.drawLine(0, status - 1, width(), status - 1);
-        painter.drawLine(width() - c::cellWidth - 1, status, width() - c::cellWidth - 1, height());
-        painter.drawLine(width() - 2 * c::cellWidth - 1, status, width() - 2 * c::cellWidth - 1, height());
+            painter.fillRect(0, status - border, width(), border, ink);
+        painter.fillRect(width() - c::cellWidth - border, status, border, height() - status, ink);
+        painter.fillRect(width() - 2 * c::cellWidth - border, status, border, height() - status, ink);
+        if (property("formatting_warning").toBool()) {
+            painter.fillRect(width() - 3 * c::cellWidth - border, status, border, height() - status, ink);
+        }
         painter.fillRect(0, height() - toolbarBorder, width(), toolbarBorder, palette().color(QPalette::WindowText));
     }
 };
@@ -72,8 +76,9 @@ protected:
         const auto paper = palette().color(QPalette::Base);
         const auto ink = palette().color(QPalette::Text);
         painter.fillRect(rect(), active ? ink : paper);
-        painter.setPen(QPen(palette().color(QPalette::Mid), ui::metrics::control::border));
-        painter.drawLine(rect().topRight(), rect().bottomRight());
+        if (!active) {
+            ui::paintEdges(painter, rect(), Qt::RightEdge, palette().color(QPalette::Mid));
+        }
         if (!isEnabled())
             painter.setOpacity(.45);
         const auto color = active ? paper : ink;
@@ -143,6 +148,12 @@ BottomNavigation::BottomNavigation(QWidget *parent) : ui::Panel(parent, Qt::TopE
         tab->setObjectName(QString("rrNav%1").arg(names[i]));
         row->addWidget(tab, 1);
         tabs.append(tab);
+        connect(tab, &QPushButton::pressed, this, [this] {
+            update();
+        });
+        connect(tab, &QPushButton::released, this, [this] {
+            update();
+        });
         connect(tab, &QPushButton::clicked, this, [this, i] {
             if (activated)
                 activated(NavigationDestination(i));
@@ -153,8 +164,16 @@ BottomNavigation::BottomNavigation(QWidget *parent) : ui::Panel(parent, Qt::TopE
 void BottomNavigation::paintEvent(QPaintEvent *event) {
     ui::Panel::paintEvent(event);
     QPainter painter(this);
-    if (!panelOpen)
+    if (!panelOpen) {
         painter.fillRect(0, 0, width(), toolbarBorder, palette().color(QPalette::WindowText));
+        return;
+    }
+    // An open panel draws the rule above the bar and leaves this band empty.
+    // Extend the active tab's fill through it, so the fill meets that rule.
+    for (auto *tab : tabs)
+        if (tab->isChecked() || tab->isDown())
+            painter.fillRect(tab->mapTo(this, QPoint()).x(), 0, tab->width(), toolbarBorder,
+                             tab->palette().color(QPalette::Text));
 }
 void BottomNavigation::setPanelOpen(bool open) {
     if (panelOpen == open)
@@ -164,6 +183,8 @@ void BottomNavigation::setPanelOpen(bool open) {
 }
 void BottomNavigation::select(int destination, bool enabled, bool lightAvailable) {
     for (int i = 0; i < tabs.size(); ++i) {
+        if (panelOpen && tabs[i]->isChecked() != (i == destination))
+            update(QRect(tabs[i]->mapTo(this, QPoint()).x(), 0, tabs[i]->width(), toolbarBorder));
         tabs[i]->setChecked(i == destination);
         tabs[i]->setEnabled(enabled && (i != int(NavigationDestination::Light) || lightAvailable));
     }
@@ -192,7 +213,7 @@ Navigation::Navigation(QWidget *parent, const ToolbarComposition &controls)
     : bar(new BottomNavigation(parent)), pageCount(new QLabel(controls.panel)), toolbar(controls.panel),
       toolbarRows(controls.rows), exitAction(controls.exitAction), settings(controls.settings),
       bookmarks(controls.bookmarks), clock(controls.clock), session(controls.session), battery(controls.battery),
-      bluetooth(controls.bluetooth) {
+      bluetooth(controls.bluetooth), formattingWarning(controls.formattingWarning) {
     upperEdge = new ReadingRule(parent);
     upperEdge->setObjectName("rrNavigationUpperEdge");
     lowerEdge = new ReadingRule(parent);
@@ -216,6 +237,15 @@ Navigation::Navigation(QWidget *parent, const ToolbarComposition &controls)
     if (auto *button = dynamic_cast<ui::Button *>(bookmarks)) {
         bookmarksPaint = button->paintMode();
         button->setPaintMode(ui::ButtonPaintMode::ToolbarCell);
+    }
+    if (formattingWarning) {
+        formattingWarningStyle = formattingWarning->styleSheet();
+        formattingWarning->setFixedSize(c::cellWidth, c::actionHeight);
+        ui::readerStyle(formattingWarning, "QPushButton{border:none;padding:0;}");
+        if (auto *button = dynamic_cast<ui::Button *>(formattingWarning)) {
+            formattingWarningPaint = button->paintMode();
+            button->setPaintMode(ui::ButtonPaintMode::ToolbarCell);
+        }
     }
     pageCount->setObjectName("rrMenuPageCount");
     pageCount->setAlignment(Qt::AlignCenter);
@@ -245,6 +275,14 @@ Navigation::~Navigation() {
         button->setPaintMode(settingsPaint);
     if (auto *button = dynamic_cast<ui::Button *>(bookmarks))
         button->setPaintMode(bookmarksPaint);
+    if (formattingWarning) {
+        if (auto *button = dynamic_cast<ui::Button *>(formattingWarning)) {
+            button->setPaintMode(formattingWarningPaint);
+        }
+        formattingWarning->setStyleSheet(formattingWarningStyle);
+        formattingWarning->setFixedSize(ui::metrics::control::toolbarButtonSize,
+                                        ui::metrics::control::toolbarButtonSize);
+    }
     session->setStyleSheet(sessionStyle);
     settings->setStyleSheet(settingsStyle);
     bookmarks->setStyleSheet(bookmarksStyle);
@@ -257,6 +295,11 @@ Navigation::~Navigation() {
 QRect Navigation::panelBounds(QSize size, int height) const {
     return QRect(0, size.height() - BottomNavigation::barHeight - height, size.width(), height);
 }
+void Navigation::stackPanel(QWidget *panel) const {
+    // Keep the header rule in place when a bottom panel opens. Raising the
+    // rule again would repaint unchanged toolbar pixels beneath it.
+    panel->stackUnder(upperEdge);
+}
 void Navigation::update(QSize size, const NavigationState &state) {
     state.footer->hide();
     toolbar->setGeometry(0, 0, size.width(), toolbarHeight());
@@ -268,23 +311,33 @@ void Navigation::update(QSize size, const NavigationState &state) {
     rules->show();
     rules->raise();
     clock->setGeometry(c::inset, ui::px(10), ui::px(160), ui::px(40));
-    session->setGeometry(ui::px(196), ui::px(10), qMax(0, size.width() - ui::px(392)), ui::px(40));
+    int sessionInset = ui::px(196);
     battery->move(size.width() - c::inset - battery->width(), ui::px(10));
     if (bluetooth) {
         bluetooth->setVisible(statusVisible && bluetooth->active());
         bluetooth->move(battery->x() - int(ui::metrics::panel::bluetoothGap) - bluetooth->width(), ui::px(10));
         if (bluetooth->active()) {
             const int rightInset = size.width() - bluetooth->x() + int(c::inset);
-            const int inset = qMax(ui::px(196), rightInset);
-            session->setGeometry(inset, ui::px(10), qMax(0, size.width() - 2 * inset), ui::px(40));
+            sessionInset = qMax(sessionInset, rightInset);
         }
     }
+    session->setGeometry(sessionInset, ui::px(10), qMax(0, size.width() - 2 * sessionInset), ui::px(40));
     exitAction->setGeometry(ui::px(24), statusHeight(), exitAction->sizeHint().width(), c::actionHeight);
     settings->setGeometry(size.width() - c::cellWidth, statusHeight(), c::cellWidth, c::actionHeight);
     bookmarks->setGeometry(size.width() - 2 * c::cellWidth, statusHeight(), c::cellWidth, c::actionHeight);
+    if (formattingWarning) {
+        formattingWarning->setGeometry(size.width() - 3 * c::cellWidth, statusHeight(), c::cellWidth, c::actionHeight);
+    }
     pageCount->setText(state.pageCount);
-    const int labelWidth = size.width() / 3;
-    pageCount->setGeometry((size.width() - labelWidth) / 2, exitAction->y(), labelWidth, exitAction->height());
+    const int rightActions = formattingWarning && !formattingWarning->isHidden() ? 3 : 2;
+    if (rules->property("formatting_warning").toBool() != (rightActions == 3)) {
+        rules->setProperty("formatting_warning", rightActions == 3);
+        rules->update();
+    }
+    const int labelLeft = qMax(exitAction->geometry().right() + 1, size.width() / 3);
+    const int labelRight = qMin(size.width() - rightActions * int(c::cellWidth), 2 * size.width() / 3);
+    const int labelWidth = qMax(0, labelRight - labelLeft);
+    pageCount->setGeometry(labelLeft, exitAction->y(), labelWidth, exitAction->height());
     pageCount->show();
     for (auto *action : state.topActions)
         action->hide();
@@ -305,7 +358,6 @@ void Navigation::update(QSize size, const NavigationState &state) {
     // Chapters covers the header's action row with its own bar; the status strip stays.
     if (state.chaptersOpen) {
         state.chapters->setGeometry(0, statusHeight(), size.width(), size.height() - height - statusHeight());
-        state.chapters->raise();
     }
     bar->select(state.active, state.enabled, state.lightAvailable);
     int top = toolbarHeight(), bottom = bar->y();
@@ -324,11 +376,29 @@ void Navigation::update(QSize size, const NavigationState &state) {
         upperEdge->hide();
         lowerEdge->hide();
     }
-    bar->raise();
+    // Keep the bar below the font picker even while the picker is hidden.
+    // Opening or closing it then leaves the header rule's order unchanged.
+    if (!state.chaptersOpen) {
+        bar->stackUnder(state.chapters);
+    } else {
+        bar->raise();
+    }
     // Keep the same stacking order on replay. Raising each rule in turn
     // invalidates its pixels even when no panel or rule has changed.
     lowerEdge->stackUnder(bar);
     upperEdge->stackUnder(lowerEdge);
+    if (state.chaptersOpen) {
+        state.chapters->stackUnder(upperEdge);
+    }
+    // Settings opens raised above the reading bars. Its heavy bottom rule is
+    // upperEdge, so keep the panel beneath it. Move it only when it is above
+    // the rule; restacking an unchanged order would repaint the panel.
+    auto *settings = state.settings;
+    if (settings->isVisible() && settings->parentWidget() == upperEdge->parentWidget()) {
+        const auto siblings = settings->parentWidget()->children();
+        if (siblings.indexOf(settings) > siblings.indexOf(upperEdge))
+            settings->stackUnder(upperEdge);
+    }
 }
 bool Navigation::contains(QPoint global) const {
     return bar->isVisible() && QRect(bar->mapToGlobal(QPoint()), bar->size()).contains(global);

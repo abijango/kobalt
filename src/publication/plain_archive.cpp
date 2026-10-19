@@ -93,8 +93,8 @@ QNetworkReply *PlainArchive::request(const QString &name) {
         return nullptr;
     if (!data_->sizes.contains(name))
         return nullptr;
-    // Never ask Nickel to decode a resource. The worker's layout inspection
-    // must parse every declared reading section before the book is displayed.
+    // Never ask Nickel to decode a resource. CREngine reads the original
+    // bytes even when the advisory formatting inspection is incomplete.
     ZipResource stream;
     if (data_->sizes.value(name) > ResourceCache::budgetBytes || !stream.open(data_->path, name))
         return new Reply({}, false);

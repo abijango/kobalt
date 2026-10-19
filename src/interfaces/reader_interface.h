@@ -3,6 +3,7 @@
 #include "platform/api/reader_host_services.h"
 #include <QDialog>
 #include <QJsonObject>
+#include <functional>
 
 namespace kobalt {
 // The controller owns publication access and loading. Each UI owns the widgets
@@ -13,6 +14,10 @@ public:
     virtual ~ReaderOpeningView() = default;
     virtual QDialog *window() const = 0;
     virtual void setProgress(int percent) = 0;
+    // Run after the first visible frame, before expensive opening work starts.
+    virtual void afterFirstPaint(std::function<void()> callback) = 0;
+    // Replace temporary system faces after the bundled interface fonts load.
+    virtual void refreshFonts() = 0;
     // The controller owns authorization and the native continuation.
     virtual void showFallback(OpeningFallback state) = 0;
 };

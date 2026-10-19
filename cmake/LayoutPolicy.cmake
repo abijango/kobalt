@@ -3,7 +3,7 @@ function(kobalt_layout_policy output root archive_source)
     # Changes to the engine or to the code that loads and marks the parsed book
     # invalidate cached books, which use the same policy.
     set(LAYOUT_POLICY_INPUTS src/publication/layout_compatibility.cpp src/publication/layout_compatibility.h
-        src/publication/native_resources.cpp src/publication/resource_cache.cpp src/publication/resource_cache.h
+        src/publication/native_resources.cpp src/publication/local_resources.cpp src/publication/resource_cache.cpp src/publication/resource_cache.h
         src/publication/image_policy.cpp src/publication/image_policy.h src/publication/publication.cpp dependencies/manifest.json
         src/engine/crengine/reader_source.cpp src/engine/crengine/reader_alignment.cpp
         src/engine/crengine/reader_page_layout.cpp src/engine/crengine/reader_links.cpp

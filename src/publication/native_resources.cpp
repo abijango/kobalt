@@ -32,6 +32,7 @@ struct TransferTimings {
 };
 thread_local bool transferring = false;
 thread_local std::vector<std::function<void()>> pendingReleases;
+std::atomic_bool networkReady{false};
 QObject *resourceNetwork() {
     // A nested event loop on the engine worker would run other queued engine
     // jobs during a transfer and corrupt CREngine's process-global font state.
@@ -46,6 +47,7 @@ QObject *resourceNetwork() {
             thread->wait();
         });
         thread->start();
+        networkReady.store(true);
         return worker;
     }();
     return network;
@@ -149,6 +151,10 @@ bool resourceSecretMatches(const QByteArray &candidate) {
     return difference == 0;
 }
 void releaseResourceConnections(std::function<void()> finished) {
+    if (!networkReady.load()) {
+        kobalt::qt::invoke(qApp, finished, Qt::QueuedConnection);
+        return;
+    }
     auto *network = resourceNetwork();
     kobalt::qt::invoke(
         network,
@@ -209,10 +215,10 @@ std::shared_ptr<ResourceCache> nativeResources(QMap<QString, qint64> sizes, cons
              headersDone = false;
         qint64 length = -1, bodyBytes = 0;
         QByteArray prefix, header;
-        const bool validateXml = name.endsWith(".xhtml", Qt::CaseInsensitive) ||
-                                 name.endsWith(".html", Qt::CaseInsensitive) ||
-                                 name.endsWith(".opf", Qt::CaseInsensitive) ||
-                                 name.endsWith(".ncx", Qt::CaseInsensitive) || name == "META-INF/container.xml";
+        // CREngine parses reading content as HTML and can recover from errors
+        // that a strict XML parser rejects. Only validate the package structure
+        // here; chapters and navigation remain the engine's responsibility.
+        const bool validateXml = name.endsWith(".opf", Qt::CaseInsensitive) || name == "META-INF/container.xml";
         QXmlStreamReader xml;
         auto finish = [&] {
             finished = true;

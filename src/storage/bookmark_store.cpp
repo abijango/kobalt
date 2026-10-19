@@ -1,6 +1,7 @@
 #include "bookmark_store.h"
 #include "reader_storage.h"
 #include <QDir>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -62,13 +63,20 @@ bool bookmarkFromJson(const QJsonObject &object, Bookmark *bookmark) {
 }
 
 QString BookmarkStore::bookKey(const QString &identity, const QByteArray &fingerprint) {
-    static const QRegularExpression purchased(
+    static const QRegularExpression legacyUuid(
         "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     static const QRegularExpression digest("^[0-9a-f]{64}$");
-    if (purchased.match(identity).hasMatch())
+    // Keep existing UUID folders. Other server IDs get a case-sensitive hash
+    // so their length and filename characters cannot affect annotation paths.
+    if (legacyUuid.match(identity).hasMatch())
         return "kobo-" + identity.toLower();
     if (identity.startsWith("file://") && digest.match(QString::fromLatin1(fingerprint)).hasMatch())
         return "file-" + QString::fromLatin1(fingerprint);
+    if (!identity.isEmpty() && identity != "." && identity != ".." && !identity.contains('/') &&
+        !identity.contains('\\') && !identity.contains(QChar(0))) {
+        return "kobo-id-" +
+               QString::fromLatin1(QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex());
+    }
     return {};
 }
 

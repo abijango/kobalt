@@ -124,6 +124,23 @@ int main(int argc, char **argv) {
     expect(imports, L::Supported, "Horizontal CSS cycle should terminate");
     imports.remove("OPS/css/two.css");
     expect(imports, L::Incomplete, "Missing imported CSS passed");
+    for (const auto *type : {"application/adobe-page-template+xml", "application/vnd.adobe-page-template+xml",
+                             "APPLICATION/ADOBE-PAGE-TEMPLATE+XML"}) {
+        auto templates = publication({}, QByteArray("<link rel='stylesheet' type='") + type +
+                                             "' href='../styles/page-template.xpgt'/>");
+        expect(templates, L::Supported, "Missing Adobe page template caused a formatting warning");
+        templates["OPS/styles/page-template.xpgt"] = "not CSS: writing-mode:vertical-lr";
+        QStringList requests;
+        if (inspect(templates, &requests).verdict != L::Supported ||
+            requests.contains("OPS/styles/page-template.xpgt")) {
+            qFatal("Adobe page template was inspected as CSS");
+        }
+        templates["OPS/text/chapter.xhtml"].replace(
+            "</head>", "<link rel='stylesheet' type='text/css' href='../css/missing.css'/></head>");
+        expect(templates, L::Incomplete, "Adobe page template concealed missing CSS");
+    }
+    expect(publication({}, "<link rel='stylesheet' type='text/css' href='../styles/page-template.xpgt'/>"),
+           L::Incomplete, "Filename extension concealed a missing CSS stylesheet");
     expect(publication({}, "<link rel='stylesheet' href='https://example.invalid/style.css'/>"), L::Incomplete,
            "Remote CSS must not be fetched");
     const QByteArray script =
@@ -175,6 +192,47 @@ int main(int argc, char **argv) {
         const QByteArray imageItem = "<item id='image' href='image.jpg' media-type='image/jpeg'/>";
         image["OPS/book.opf"].replace("</manifest>", imageItem + imageItem + "</manifest>");
         expect(image, L::Supported, "Identical duplicate image manifest item rejected");
+    }
+    {
+        const auto broken = publication("<p>" + QByteArray(1000, 'x') + "\n<p>&nbsp;</p>");
+        const auto failure = inspect(broken);
+        if (failure.verdict != L::Incomplete || failure.resource != "OPS/text/chapter.xhtml" ||
+            !failure.issue.contains("nbsp") || failure.line != 2 || failure.column <= 0 ||
+            !failure.excerpt.contains("&nbsp;") || failure.excerpt.size() > 240) {
+            qFatal("XML failure lost its exact parser location or bounded excerpt");
+        }
+        for (const bool bom : {false, true}) {
+            auto utf16 = publication();
+            const QString text = QStringLiteral("<html><body><p>Text &nbsp;</p></body></html>");
+            QByteArray encoded = bom ? QByteArray::fromHex("fffe") : QByteArray();
+            for (const auto c : text) {
+                encoded.append(char(c.unicode() & 0xff));
+                encoded.append(char(c.unicode() >> 8));
+            }
+            utf16["OPS/text/chapter.xhtml"] = encoded;
+            const auto failure = inspect(utf16);
+            if (!failure.issue.contains("nbsp") || !failure.excerpt.contains("&nbsp;") ||
+                failure.excerpt.contains(QChar(0))) {
+                qFatal("UTF-16 XML diagnostics lost the decoded failure excerpt");
+            }
+        }
+        const auto missing = inspect(publication({}, "<link rel='stylesheet' href='../css/missing.css'/>"));
+        if (missing.resource != "OPS/text/chapter.xhtml" ||
+            missing.issue != "Referenced resource is missing: OPS/css/missing.css" ||
+            !missing.excerpt.contains("missing.css")) {
+            qFatal("Missing stylesheet lost its reference and source context");
+        }
+        auto css = publication({}, "<link rel='stylesheet' href='../css/main.css'/>");
+        css["OPS/css/main.css"] = QByteArray(1000, ' ') + "body{content:'unterminated";
+        const auto malformedCss = inspect(css);
+        if (malformedCss.resource != "OPS/css/main.css" || malformedCss.issue != "Unterminated CSS string" ||
+            !malformedCss.excerpt.contains("unterminated") || malformedCss.excerpt.size() > 240) {
+            qFatal("Malformed CSS lost its resource and bounded excerpt");
+        }
+        const auto supported = inspect(publication());
+        if (!supported.issue.isEmpty() || !supported.excerpt.isEmpty()) {
+            qFatal("Supported book unexpectedly has issue diagnostics");
+        }
     }
     auto large = publication();
     large["OPS/text/chapter.xhtml"] = QByteArray(3 * 1024 * 1024, 'x');

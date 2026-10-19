@@ -41,7 +41,9 @@ struct Registration {
     int steps = -1;
     QVector<QVector<int>> ids;
     QVector<int> scriptFallbackIds;
-    QMap<QString, QByteArray> sources;
+    // Interface faces and script fallbacks load separately: the opening view
+    // needs only the faces, before the whole asset bundle is verified.
+    QMap<QString, QByteArray> sources, fallbackSources;
     FontCopies copies;
 };
 Registration &registration() {
@@ -92,7 +94,9 @@ QVector<int> addScriptFallbacks(const QMap<QString, QByteArray> &sources) {
 }
 void registerFaces() {
     auto &current = registration();
-    if (current.steps == requestedSteps)
+    // Before the faces are read, a use falls back without recording a weight,
+    // so the first loaded faces still register.
+    if (current.steps == requestedSteps || current.sources.isEmpty())
         return;
     auto added = addFaces(requestedSteps);
     int expected = 0;
@@ -124,10 +128,62 @@ QFont sizedFont(const QString &family, int pixels) {
     return font;
 }
 }
-bool initializeInterfaceFonts(const AssetBundle &assets) {
+namespace {
+// Replaces the registered faces when their bytes change. Keeps the faces in
+// use when the new set cannot be registered in full.
+bool replaceFaces(QMap<QString, QByteArray> sources, bool *changed) {
+    auto &current = registration();
+    if (current.sources == sources)
+        return true;
+    if (current.steps < 0) {
+        // Nothing has drawn with the faces yet. They register on first use.
+        current.sources = std::move(sources);
+        *changed = true;
+        return true;
+    }
+    auto old = std::move(current.sources);
+    current.sources = std::move(sources);
+    auto added = addFaces(requestedSteps);
+    if (faceCount(added) != current.sources.size()) {
+        for (const auto &family : added)
+            for (const int id : family)
+                QFontDatabase::removeApplicationFont(id);
+        current.sources = std::move(old);
+        return false;
+    }
+    for (const auto &family : current.ids)
+        for (const int id : family)
+            QFontDatabase::removeApplicationFont(id);
+    current.steps = requestedSteps;
+    current.ids = std::move(added);
+    *changed = true;
+    return true;
+}
+}
+bool initializeOpeningFonts(const AssetBundle &assets) {
+    // A previous opening registered verified faces. The full check after the
+    // first paint replaces them if the bundle changed.
+    if (!registration().sources.isEmpty())
+        return true;
+    QMap<QString, QByteArray> sources;
+    for (const auto &family : families())
+        for (const auto &face : family.faces) {
+            const auto bytes = assets.manifestFontData(face.file);
+            if (bytes.isEmpty())
+                return false;
+            sources.insert(face.file, bytes);
+        }
+    bool changed = false;
+    return replaceFaces(std::move(sources), &changed);
+}
+bool initializeInterfaceFonts(const AssetBundle &assets, bool *changed) {
+    bool facesChanged = false;
+    if (changed) {
+        *changed = false;
+    }
     if (!initializePrivateInterfaceText(assets))
         return false;
-    QMap<QString, QByteArray> sources;
+    QMap<QString, QByteArray> sources, fallbackSources;
     for (const auto &family : families())
         for (const auto &face : family.faces) {
             const auto bytes = assets.fontData(face.file);
@@ -139,43 +195,23 @@ bool initializeInterfaceFonts(const AssetBundle &assets) {
         const auto bytes = assets.fontData(file);
         if (bytes.isEmpty())
             return false;
-        sources.insert(file, bytes);
+        fallbackSources.insert(file, bytes);
     }
     auto &current = registration();
-    if (current.sources == sources)
-        return true;
-    if (current.steps < 0) {
-        auto scriptFallbackIds = addScriptFallbacks(sources);
+    if (current.fallbackSources != fallbackSources) {
+        auto scriptFallbackIds = addScriptFallbacks(fallbackSources);
         if (scriptFallbackIds.size() != int(scriptFallbackFontFiles.size()))
             return false;
         for (const int id : current.scriptFallbackIds)
             QFontDatabase::removeApplicationFont(id);
-        current.sources = std::move(sources);
+        current.fallbackSources = std::move(fallbackSources);
         current.scriptFallbackIds = std::move(scriptFallbackIds);
-        return true;
     }
-    const auto old = std::move(current.sources);
-    current.sources = std::move(sources);
-    auto added = addFaces(requestedSteps);
-    auto scriptFallbackIds = addScriptFallbacks(current.sources);
-    if (faceCount(added) != current.sources.size() - int(scriptFallbackFontFiles.size()) ||
-        scriptFallbackIds.size() != int(scriptFallbackFontFiles.size())) {
-        for (const auto &family : added)
-            for (int id : family)
-                QFontDatabase::removeApplicationFont(id);
-        for (const int id : scriptFallbackIds)
-            QFontDatabase::removeApplicationFont(id);
-        current.sources = old;
+    if (!replaceFaces(std::move(sources), &facesChanged))
         return false;
+    if (changed) {
+        *changed = facesChanged;
     }
-    for (const auto &family : current.ids)
-        for (int id : family)
-            QFontDatabase::removeApplicationFont(id);
-    for (const int id : current.scriptFallbackIds)
-        QFontDatabase::removeApplicationFont(id);
-    current.steps = requestedSteps;
-    current.ids = std::move(added);
-    current.scriptFallbackIds = std::move(scriptFallbackIds);
     return true;
 }
 bool setInterfaceWeight(int steps) {

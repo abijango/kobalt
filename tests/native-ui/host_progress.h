@@ -7,8 +7,9 @@ namespace kobalt::test {
 // another device would. Writes from the reader are recorded, not stored.
 struct HostProgress {
     ReadingProgress current;
-    bool changed = false;
+    bool changed = false, failWrite = false;
     int writes = 0;
+    double percent = 0;
     void publish(ReadingProgress progress) {
         current = std::move(progress);
         changed = true;

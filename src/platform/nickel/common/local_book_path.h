@@ -9,4 +9,13 @@ namespace kobalt {
 inline QString localReaderBookPath(const QString &identity) {
     return identity.startsWith("file:///") ? identity.mid(7) : QString();
 }
+// Compatible sync servers can use numeric or other string IDs. Preserve the
+// ID as one filename inside Nickel's download directory, never as a URL.
+inline QString downloadedReaderBookPath(const QString &identity) {
+    if (identity.isEmpty() || identity == "." || identity == ".." || identity.contains('/') ||
+        identity.contains('\\') || identity.contains(QChar(0))) {
+        return {};
+    }
+    return QStringLiteral("/mnt/onboard/.kobo/kepub/") + identity;
+}
 }

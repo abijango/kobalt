@@ -54,6 +54,7 @@ private:
     // listPage -1 asks redraw() for the page that holds listEntry, so rotation keeps the place.
     int entry = -1, listPage = 0, listEntry = 0, divider = 0;
     void select(int index);
-    void redraw();
+    void turnPage(int direction);
+    void redraw(bool paging = false);
 };
 }
