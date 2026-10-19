@@ -152,8 +152,12 @@ bool ReadingBook::writeNative(const QString &location, const QString &mappingErr
     } else if (error.isEmpty())
         error = strings::get("error.nickel_save_deferred_while_progress_or_device_state_is_unresolved");
     nativeWritebackError = error;
-    diagnostic("native-save",
-               {{"result", nativeWriteback}, {"mapping_failed", timeOnly}, {"failed", !error.isEmpty()}});
+    diagnostic("native-save", {{"result", nativeWriteback},
+                               {"mapping_failed", timeOnly},
+                               {"failed", !error.isEmpty()},
+                               {"percent", lastNativePercent},
+                               {"page", model->page()},
+                               {"pages", model->pages()}});
     return true;
 }
 bool ReadingBook::saveDictionaryChoice(const QString &id) {

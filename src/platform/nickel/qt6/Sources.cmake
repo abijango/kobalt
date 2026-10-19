@@ -6,7 +6,8 @@ set(KOBALT_REFRESH_SOURCE src/platform/nickel/qt6/refresh.cpp)
 set(KOBALT_ANIMATION_SOURCE src/platform/nickel/display/page_animation.cpp)
 set(KOBALT_ORIENTATION_SOURCE src/platform/nickel/qt6/orientation.cpp)
 set(KOBALT_INTEGRATION_SOURCES
-    src/platform/nickel/common/book_menu.cpp src/platform/nickel/common/hardcover_sync.cpp
+    src/platform/nickel/common/book_menu.cpp src/platform/nickel/common/hardcover_progress.cpp
+    src/platform/nickel/common/hardcover_progress.h src/platform/nickel/common/hardcover_sync.cpp
     src/platform/nickel/common/hardcover_sync.h src/platform/nickel/common/reading_bridge.cpp
     src/platform/nickel/common/reader_coordinator.cpp
     src/platform/nickel/common/reader_host_services.cpp src/platform/nickel/common/window_presentation.cpp

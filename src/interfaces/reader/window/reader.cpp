@@ -1419,7 +1419,12 @@ void Reader::reportNativeProgress(const char *reason) {
     if (!services.reportReadingProgress)
         return;
     if (book && book->wroteNativeProgress()) {
-        diagnostic("hardcover-note", {{"reason", reason}, {"percent", book->nativePercent()}}, false);
+        diagnostic("hardcover-note",
+                   {{"reason", reason},
+                    {"percent", book->nativePercent()},
+                    {"page", book->session() ? book->session()->page() : -1},
+                    {"pages", book->session() ? book->session()->pages() : -1}},
+                   false);
         services.reportReadingProgress(book->identity(), book->nativePercent());
         return;
     }

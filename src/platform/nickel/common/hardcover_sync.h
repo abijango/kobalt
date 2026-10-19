@@ -1,4 +1,5 @@
 #pragma once
+#include "hardcover_progress.h"
 #include <QHash>
 #include <QObject>
 #include <QString>
@@ -10,10 +11,12 @@ class QTimer;
 namespace kobalt {
 inline constexpr int hardcoverMinimumPercent = 2;
 
-// Optional Hardcover.app progress updates through an installed NickelHardcover
-// command. The command is not part of Kobalt. When it is absent, or the
-// reader setting is off, nothing is sent. Calls return immediately: a missing
-// network leaves the update queued and does not delay suspend.
+// Optional Hardcover.app progress updates. When NickelHardcover's config.ini
+// has a token, Kobalt calls Hardcover's GraphQL API and does not log that
+// token. Otherwise it runs the installed NickelHardcover command. When neither
+// is available, or the reader setting is off, nothing is sent. Calls return
+// immediately: a missing network leaves the update queued and does not delay
+// suspend.
 class HardcoverSync : public QObject {
     Q_OBJECT
 public:
@@ -70,6 +73,7 @@ private:
     CliFlags probedFlags;
     int lastLink = -2;
     QTimer *retryTimer = nullptr;
+    HardcoverProgress *progressClient = nullptr;
     QVector<Update> pending;
     QHash<QString, int> sent;
     QString inflightId;
