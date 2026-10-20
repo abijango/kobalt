@@ -6,69 +6,32 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
-#include <QSettings>
 #include <QTemporaryDir>
 #include <memory>
 
 using namespace kobalt;
 namespace {
 const auto book = QStringLiteral("file:///mnt/onboard/books/Katabasis-R. F. Kuang.epub");
-HardcoverSync::CommandResult result(int code) {
-    HardcoverSync::CommandResult value;
-    value.exitCode = code;
-    value.reason = QStringLiteral("exited");
-    return value;
-}
-QString nickelKey(QString contentId, const char *field) {
-    contentId.replace(QLatin1Char('/'), QLatin1Char('-'));
-    contentId.replace(QLatin1Char('\\'), QLatin1Char('-'));
-    return contentId + QLatin1Char('/') + QLatin1String(field);
-}
 struct Harness {
     QTemporaryDir root;
-    int link = 0;
-    bool finishNow = false;
-    int finishCode = 0;
-    QVector<QStringList> attempts;
-    QVector<std::function<void(const HardcoverSync::CommandResult &)>> waiting;
     std::unique_ptr<HardcoverSync> sync;
-    QString preferences;
-    QString pending;
-    QString tool;
-    void build() {
+    void build(const QString &config = {}) {
         require(root.isValid(), "Cannot create Hardcover sync directory");
-        preferences = root.filePath("reader-settings.json");
-        pending = root.filePath("hardcover-pending.json");
-        tool = root.filePath("NickelHardcover");
+        const auto preferences = root.filePath("reader-settings.json");
+        const auto pending = root.filePath("hardcover-pending.json");
+        const auto tool = root.filePath("NickelHardcover");
         require(QDir().mkpath(tool), "Cannot create NickelHardcover directory");
         require(QFile(tool + "/cli").open(QIODevice::WriteOnly), "Cannot create cli");
-        HardcoverSync::Paths paths{tool, pending, preferences};
-        sync = std::make_unique<HardcoverSync>(
-            paths,
-            [this] {
-                return link;
-            },
-            [this](QObject *, const QString &, const QStringList &arguments,
-                   std::function<void(const HardcoverSync::CommandResult &)> finished) {
-                attempts.append(arguments);
-                if (finishNow)
-                    finished(result(finishCode));
-                else
-                    waiting.append(std::move(finished));
-            });
-    }
-    void finish(int code) {
-        require(!waiting.isEmpty(), "No Hardcover command is waiting");
-        auto done = waiting.takeFirst();
-        done(result(code));
-    }
-    void enable() {
+        if (!config.isEmpty()) {
+            QFile file(tool + "/config.ini");
+            require(file.open(QIODevice::WriteOnly) && file.write(config.toUtf8()) == config.size(),
+                    "Cannot write NickelHardcover config");
+        }
         require(storage::writeJson(preferences, qt::object({{"hardcover_progress_sync", true}})),
                 "Cannot enable Hardcover sync");
-    }
-    QStringList take() {
-        require(!attempts.isEmpty(), "Hardcover command was not started");
-        return attempts.takeLast();
+        sync = std::make_unique<HardcoverSync>(HardcoverSync::Paths{tool, pending, preferences}, [] {
+            return 1;
+        });
     }
 };
 }
@@ -77,148 +40,14 @@ int main(int argc, char **argv) {
     {
         Harness harness;
         harness.build();
-        harness.link = 1;
         harness.sync->note(book, 40);
-        require(harness.attempts.isEmpty() && harness.sync->pendingCount() == 0, "Disabled sync started a command");
+        require(harness.sync->pendingCount() == 0, "The NickelHardcover CLI can create a read and must not run");
     }
     {
         Harness harness;
-        harness.build();
-        harness.enable();
+        harness.build(QStringLiteral("auto_sync_default=true\nsync_on_close=1\nsync_on_read=20\n"));
         harness.sync->note(book, 40);
-        harness.link = 1;
-        harness.finishNow = true;
-        harness.sync->note(QStringLiteral("file:///mnt/onboard/books/other.epub"), 1);
-        require(harness.attempts.size() == 1 && harness.attempts.at(0).contains(QStringLiteral("40")),
-                "A later short book did not flush the queued update");
-        require(harness.sync->pendingCount() == 0, "Flushed update stayed queued");
-    }
-    {
-        Harness harness;
-        harness.build();
-        harness.enable();
-        harness.sync->note(book, 1);
-        require(harness.attempts.isEmpty() && harness.sync->pendingCount() == 0, "Percent below 2 was queued");
-        harness.sync->note(book, 40);
-        require(harness.attempts.isEmpty() && harness.sync->pendingCount() == 1, "Offline update was sent or dropped");
-        require(storage::readJson(harness.pending).value("pending").toArray().size() == 1,
-                "Offline update was not stored");
-        harness.link = 1;
-        harness.sync->flush();
-        const auto failed = harness.take();
-        require(failed == QStringList({"update", "--value", "40", "--content-id", book}),
-                "Hardcover command arguments changed");
-        require(harness.sync->busy(), "Command returned before it finished");
-        harness.finish(101);
-        require(!harness.sync->busy() && harness.sync->pendingCount() == 1, "Network failure dropped the update");
-        require(!QFile::exists(harness.tool + "/settings.ini"), "Failed command wrote NickelHardcover progress");
-        harness.finishNow = true;
-        harness.finishCode = 0;
-        harness.sync->flush();
-        require(!harness.sync->busy() && harness.sync->pendingCount() == 0,
-                "Successful command left the update queued");
-        QSettings settings(harness.tool + "/settings.ini", QSettings::IniFormat);
-        require(settings.value(nickelKey(book, "progress")).toInt() == 40,
-                "Successful command did not record progress");
-        require(settings.value(nickelKey(book, "lastSynced")).toString().isEmpty(),
-                "Successful command wrote lastSynced");
-        require(!harness.attempts.last().contains(QStringLiteral("--after")),
-                "A later update passed --after to a command that does not accept it");
-        const int sent = harness.attempts.size();
-        harness.sync->note(book, 40);
-        require(harness.attempts.size() == sent && harness.sync->pendingCount() == 0,
-                "The same percent was sent twice");
-        harness.sync->note(book, 55);
-        require(harness.attempts.size() == sent + 1 && harness.sync->pendingCount() == 0, "A new percent was not sent");
-        settings.setValue(nickelKey(book, "enabled"), false);
-        settings.sync();
-        harness.sync->note(book, 70);
-        require(harness.attempts.size() == sent + 1 && harness.sync->pendingCount() == 0,
-                "A disabled NickelHardcover book was sent");
-    }
-    {
-        Harness harness;
-        harness.build();
-        harness.enable();
-        harness.link = -1;
-        QSettings settings(harness.tool + "/settings.ini", QSettings::IniFormat);
-        settings.setValue(nickelKey(book, "linkedbook"), "4242");
-        settings.setValue(nickelKey(book, "lastSynced"), "2026-05-01T00:00:00Z");
-        settings.setValue(nickelKey(book, "progress"), 15);
-        settings.sync();
-        harness.finishNow = true;
-        harness.sync->note(book, 15);
-        require(harness.attempts.isEmpty(), "NickelHardcover's stored percent was sent again");
-        harness.sync->note(book, 22);
-        const auto args = harness.take();
-        require(args.contains(QStringLiteral("--linked-id")) && args.contains(QStringLiteral("4242")) &&
-                    !args.contains(QStringLiteral("--after")) && !args.contains(QStringLiteral("--book-id")) &&
-                    args.contains(QStringLiteral("22")),
-                "Linked id was omitted or an unsupported flag was added");
-    }
-    {
-        Harness harness;
-        harness.build();
-        harness.enable();
-        harness.link = 1;
-        require(QFile::remove(harness.tool + "/cli"), "Cannot hide the lowercase command");
-        harness.sync->note(book, 30);
-        require(harness.attempts.isEmpty() && harness.sync->pendingCount() == 1, "Missing command dropped the update");
-        require(QFile(harness.tool + "/CLI").open(QIODevice::WriteOnly), "Cannot create CLI");
-        harness.finishNow = true;
-        harness.sync->flush();
-        require(harness.attempts.size() == 1 && harness.sync->pendingCount() == 0, "Uppercase CLI was ignored");
-        const auto other = QStringLiteral("file:///mnt/onboard/books/other.epub");
-        harness.finishNow = false;
-        harness.sync->note(book, 80);
-        require(harness.sync->busy(), "First book did not hold the single command");
-        harness.sync->note(other, 33);
-        require(harness.attempts.size() == 2 && harness.sync->pendingCount() == 2,
-                "Second book started early or was dropped");
-        harness.finish(0);
-        require(harness.attempts.size() == 3 && harness.sync->pendingCount() == 1 && harness.sync->busy(),
-                "Queued book was not started after the first success");
-        harness.finish(0);
-        require(harness.sync->pendingCount() == 0, "Queued book was not sent");
-        require(storage::readJson(harness.pending).value("sent").toObject().value(other).toInt() == 33,
-                "Second book's percent was not remembered");
-    }
-    {
-        QTemporaryDir root;
-        require(root.isValid(), "Cannot create a restart directory");
-        const auto preferences = root.filePath("reader-settings.json");
-        const auto pending = root.filePath("hardcover-pending.json");
-        const auto tool = root.filePath("NickelHardcover");
-        require(QDir().mkpath(tool) && QFile(tool + "/cli").open(QIODevice::WriteOnly), "Cannot stage the command");
-        require(storage::writeJson(preferences, qt::object({{"hardcover_progress_sync", true}})),
-                "Cannot enable stored Hardcover sync");
-        int link = 0;
-        QVector<QStringList> attempts;
-        auto runner = [&](QObject *, const QString &, const QStringList &arguments,
-                          std::function<void(const HardcoverSync::CommandResult &)> finished) {
-            attempts.append(arguments);
-            if (link == 1)
-                finished(result(0));
-        };
-        {
-            HardcoverSync sync(
-                {tool, pending, preferences},
-                [&] {
-                    return link;
-                },
-                runner);
-            sync.note(book, 44);
-            require(attempts.isEmpty() && sync.pendingCount() == 1, "Restart fixture sent while offline");
-        }
-        link = 1;
-        HardcoverSync restored(
-            {tool, pending, preferences},
-            [&] {
-                return link;
-            },
-            runner);
-        require(attempts.size() == 1 && restored.pendingCount() == 0,
-                "A stored update was not sent when the network was up");
+        require(harness.sync->pendingCount() == 0, "Kobalt ran the CLI while NickelHardcover auto-sync was enabled");
     }
     require(hardcoverToken(QStringLiteral("authorization=Bearer secret-value\n")) == QStringLiteral("secret-value"),
             "Bearer prefix stayed on the token");
@@ -240,47 +69,40 @@ int main(int argc, char **argv) {
                 hardcoverBookPath(QStringLiteral("folder/book")).isEmpty(),
             "A non-local or escaped ContentID became an EPUB path");
     {
-        const HardcoverRead older{100, 2661, 400, QStringLiteral("2026-10-12")};
-        const HardcoverRead newer{200, 31889, 432, QStringLiteral("2026-01-01")};
-        const auto update = hardcoverProgressUpdate({older, newer}, 9, 2661, 400, 20);
-        require(!update.insert && update.readId == 200 && update.editionId == 31889 && update.progressPages == 86 &&
-                    update.startedAt == QStringLiteral("2026-01-01"),
-                "Progress update did not use the newest read's edition");
-        const auto inserted = hardcoverProgressUpdate({}, 9, 2661, 432, 20);
-        require(inserted.insert && inserted.valid() && inserted.userBookId == 9 && inserted.progressPages == 86,
-                "A book with no read did not insert at 20 percent");
-        require(!hardcoverProgressUpdate({}, 9, 2661, 0, 20).valid(), "Missing edition pages was treated as valid");
-        const HardcoverRead legend{6610852, 2661, 432, QStringLiteral("2026-10-12")};
-        require(hardcoverProgressUpdate({legend}, 9, 1, 1, 24).progressPages == 104,
-                "24 percent of 432 pages was not 104");
-        require(hardcoverProgressUpdate({legend}, 9, 1, 1, 33).progressPages == 143,
-                "33 percent of 432 pages was not 143");
+        const HardcoverRead active{6610852, 2661, 432, QStringLiteral("2026-10-12")};
+        const auto update = hardcoverProgressUpdate({active}, 1, 1, 24);
+        require(update.valid() && update.readId == active.id && update.editionId == active.editionId &&
+                    update.progressPages == 104 && update.startedAt == active.startedAt,
+                "One active read was not updated");
+        require(!hardcoverProgressUpdate({}, 2661, 432, 20).valid(), "A missing active read could create a new read");
+        require(!hardcoverProgressUpdate({active, active}, 2661, 432, 20).valid(),
+                "Multiple active reads were guessed at");
     }
     {
-        const auto reads = qt::array({
-            QJsonValue(qt::object({{"id", 90},
-                                   {"edition_id", 31889},
-                                   {"started_at", "2026-01-01"},
-                                   {"edition", qt::object({{"pages", 432}})}})),
-            QJsonValue(qt::object({{"id", 50},
-                                   {"edition_id", 2661},
-                                   {"started_at", "2026-10-12"},
-                                   {"edition", qt::object({{"pages", 400}})}})),
-        });
+        const auto activeRead = QJsonValue(qt::object({{"id", 90},
+                                                       {"edition_id", 31889},
+                                                       {"started_at", "2026-01-01"},
+                                                       {"edition", qt::object({{"pages", 432}})}}));
         const auto books = qt::array({
-            QJsonValue(qt::object({{"id", 1}, {"status_id", 1}, {"edition_id", 10}})),
+            QJsonValue(qt::object(
+                {{"id", 1}, {"status_id", 1}, {"edition_id", 10}, {"user_book_reads", qt::array({activeRead})}})),
             QJsonValue(qt::object({{"id", 2},
                                    {"status_id", 2},
                                    {"edition_id", 2661},
                                    {"edition", qt::object({{"pages", 400}})},
-                                   {"user_book_reads", reads}})),
+                                   {"user_book_reads", qt::array({activeRead})}})),
         });
         const auto chosen = hardcoverSelectUserBook(books);
-        require(chosen.id == 2 && chosen.editionId == 2661 && chosen.reads.size() == 2 && chosen.reads.last().id == 90,
-                "Currently reading book did not keep the newest read");
-        const auto update = hardcoverProgressUpdate(chosen.reads, chosen.id, chosen.editionId, chosen.pages, 33);
-        require(update.readId == 90 && update.editionId == 31889 && update.progressPages == 143,
-                "The visible read was not the one updated");
+        require(chosen.id == 2 && chosen.reads.size() == 1 && chosen.reads.first().id == 90,
+                "Finished or non-current reads were considered active");
+        const auto ambiguous = hardcoverSelectUserBook(qt::array({
+            QJsonValue(qt::object(
+                {{"id", 2}, {"status_id", 2}, {"edition_id", 2661}, {"user_book_reads", qt::array({activeRead})}})),
+            QJsonValue(qt::object(
+                {{"id", 3}, {"status_id", 2}, {"edition_id", 31889}, {"user_book_reads", qt::array({activeRead})}})),
+        }));
+        require(ambiguous.reads.size() == 2 && !hardcoverProgressUpdate(ambiguous.reads, 2661, 400, 33).valid(),
+                "Multiple active user books selected an arbitrary read");
     }
     return 0;
 }

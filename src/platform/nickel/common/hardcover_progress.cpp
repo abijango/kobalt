@@ -24,10 +24,6 @@ const auto updateMutation = QStringLiteral(
     "mutation UpdateBookProgress($id: Int!, $pages: Int, $editionId: Int, $startedAt: date) { "
     "update_user_book_read(id: $id, object: { progress_pages: $pages, edition_id: $editionId, started_at: "
     "$startedAt }) { error user_book_read { id progress_pages edition_id } } }");
-const auto insertMutation = QStringLiteral(
-    "mutation InsertUserBookRead($id: Int!, $pages: Int, $editionId: Int, $startedAt: date) { "
-    "insert_user_book_read(user_book_id: $id, user_book_read: { progress_pages: $pages, edition_id: $editionId, "
-    "started_at: $startedAt }) { error user_book_read { id progress_pages edition_id } } }");
 QString zipText(const QString &path, const QString &name) {
     ZipResource zip;
     if (!zip.open(path, name, 2 * 1024 * 1024))
@@ -149,45 +145,38 @@ QString hardcoverBookPath(const QString &contentId) {
 }
 HardcoverUserBook hardcoverSelectUserBook(const QJsonArray &books) {
     HardcoverUserBook chosen;
-    bool readingChosen = false;
     for (const auto &value : books) {
         const auto book = value.toObject();
-        const bool reading = book.value(QStringLiteral("status_id")).toInt() == 2;
-        if (readingChosen || (chosen.id != 0 && !reading))
+        if (book.value(QStringLiteral("status_id")).toInt() != 2)
             continue;
-        HardcoverUserBook next;
-        next.id = jsonId(book.value(QStringLiteral("id")));
-        next.editionId = jsonId(book.value(QStringLiteral("edition_id")));
-        next.pages = editionPages(book);
+        if (chosen.id == 0) {
+            chosen.id = jsonId(book.value(QStringLiteral("id")));
+            chosen.editionId = jsonId(book.value(QStringLiteral("edition_id")));
+            chosen.pages = editionPages(book);
+        }
         for (const auto &readValue : book.value(QStringLiteral("user_book_reads")).toArray()) {
             const auto read = readFromJson(readValue.toObject());
             if (read.id > 0)
-                next.reads.append(read);
+                chosen.reads.append(read);
         }
-        std::sort(next.reads.begin(), next.reads.end(), [](const HardcoverRead &left, const HardcoverRead &right) {
-            return left.id < right.id;
-        });
-        chosen = next;
-        readingChosen = reading;
     }
+    std::sort(chosen.reads.begin(), chosen.reads.end(), [](const HardcoverRead &left, const HardcoverRead &right) {
+        return left.id < right.id;
+    });
     return chosen;
 }
-HardcoverProgressUpdate hardcoverProgressUpdate(const QVector<HardcoverRead> &reads, qint64 userBookId,
-                                                qint64 fallbackEditionId, int editionPages, int percent) {
+HardcoverProgressUpdate hardcoverProgressUpdate(const QVector<HardcoverRead> &reads, qint64 fallbackEditionId,
+                                                int editionPages, int percent) {
     HardcoverProgressUpdate update;
-    update.userBookId = userBookId;
+    if (reads.size() != 1)
+        return update;
     int pages = editionPages;
-    if (!reads.isEmpty()) {
-        const auto &current = reads.last();
-        update.readId = current.id;
-        update.editionId = current.editionId > 0 ? current.editionId : fallbackEditionId;
-        update.startedAt = current.startedAt;
-        if (current.editionPages > 0)
-            pages = current.editionPages;
-    } else {
-        update.insert = true;
-        update.editionId = fallbackEditionId;
-    }
+    const auto &current = reads.first();
+    update.readId = current.id;
+    update.editionId = current.editionId > 0 ? current.editionId : fallbackEditionId;
+    update.startedAt = current.startedAt;
+    if (current.editionPages > 0)
+        pages = current.editionPages;
     if (update.startedAt.isEmpty())
         update.startedAt = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
     if (pages > 0 && percent > 0)
@@ -255,39 +244,42 @@ void HardcoverProgress::update(const QString &contentId, const QString &linkedId
                 return fail(QStringLiteral("edition-not-found"));
             const auto readsQuery = QStringLiteral(
                 "query ($bookId: Int!, $userId: Int!) { user_books(where: {book_id: {_eq: $bookId}, user_id: {_eq: "
-                "$userId}}) { id edition_id status_id edition { pages } user_book_reads(order_by: {id: asc}) { id "
-                "started_at edition_id edition { pages } } } }");
+                "$userId}, status_id: {_eq: 2}}) { id edition_id status_id edition { pages } user_book_reads(where: "
+                "{finished_at: {_is_null: true}, edition: {reading_format_id: {_neq: 2}}}, order_by: {id: asc}) { "
+                "id started_at edition_id edition { pages } } } }");
             post(readsQuery, qt::object({{"bookId", gqlInt(bookId)}, {"userId", gqlInt(userId)}}),
                  [post, fail, percent, finished, network, editionId, pages](const QJsonObject &data,
                                                                             const QString &error) {
                      if (!error.isEmpty())
                          return fail(error);
                      const auto chosen = hardcoverSelectUserBook(data.value(QStringLiteral("user_books")).toArray());
-                     if (chosen.id <= 0)
-                         return fail(QStringLiteral("no-user-book"));
-                     const qint64 readEdition = !chosen.reads.isEmpty() && chosen.reads.last().editionId > 0
-                                                    ? chosen.reads.last().editionId
+                     if (chosen.reads.size() != 1) {
+                         const auto reason = chosen.reads.isEmpty() ? QStringLiteral("no-active-read")
+                                                                    : QStringLiteral("ambiguous-active-read");
+                         diagnostic("hardcover-graphql",
+                                    {{"skipped", true}, {"reason", reason}, {"active_reads", chosen.reads.size()}});
+                         return finished(true, QStringLiteral("skipped-%1").arg(reason));
+                     }
+                     const auto &read = chosen.reads.first();
+                     const qint64 readEdition = read.editionId > 0     ? read.editionId
                                                 : chosen.editionId > 0 ? chosen.editionId
                                                                        : editionId;
                      int readPages = 0;
-                     if (!chosen.reads.isEmpty() && chosen.reads.last().editionId == readEdition &&
-                         chosen.reads.last().editionPages > 0)
-                         readPages = chosen.reads.last().editionPages;
+                     if (read.editionId == readEdition && read.editionPages > 0)
+                         readPages = read.editionPages;
                      else if (chosen.editionId == readEdition && chosen.pages > 0)
                          readPages = chosen.pages;
                      else if (editionId == readEdition && pages > 0)
                          readPages = pages;
                      auto send = [post, fail, finished, network, chosen, readEdition, percent](int editionPageCount) {
                          auto reads = chosen.reads;
-                         if (!reads.isEmpty() && reads.last().editionPages <= 0)
-                             reads.last().editionPages = editionPageCount;
-                         const auto update =
-                             hardcoverProgressUpdate(reads, chosen.id, readEdition, editionPageCount, percent);
+                         if (reads.first().editionPages <= 0)
+                             reads.first().editionPages = editionPageCount;
+                         const auto update = hardcoverProgressUpdate(reads, readEdition, editionPageCount, percent);
                          if (!update.valid())
                              return fail(QStringLiteral("no-pages"));
-                         const auto id = update.insert ? update.userBookId : update.readId;
-                         post(update.insert ? insertMutation : updateMutation,
-                              qt::object({{"id", gqlInt(id)},
+                         post(updateMutation,
+                              qt::object({{"id", gqlInt(update.readId)},
                                           {"pages", update.progressPages},
                                           {"editionId", gqlInt(update.editionId)},
                                           {"startedAt", update.startedAt}}),
@@ -295,9 +287,7 @@ void HardcoverProgress::update(const QString &contentId, const QString &linkedId
                                                                         const QString &mutationError) {
                                   if (!mutationError.isEmpty())
                                       return fail(mutationError);
-                                  const auto key = update.insert ? QStringLiteral("insert_user_book_read")
-                                                                 : QStringLiteral("update_user_book_read");
-                                  const auto payload = result.value(key).toObject();
+                                  const auto payload = result.value(QStringLiteral("update_user_book_read")).toObject();
                                   const auto apiError = payload.value(QStringLiteral("error"));
                                   const auto apiErrorText =
                                       apiError.isArray() ? apiError.toArray().first().toString() : apiError.toString();
@@ -314,8 +304,7 @@ void HardcoverProgress::update(const QString &contentId, const QString &linkedId
                                                                    {"edition_id", update.editionId},
                                                                    {"user_book_edition", chosen.editionId},
                                                                    {"progress_pages", update.progressPages},
-                                                                   {"reads", chosen.reads.size()},
-                                                                   {"insert", update.insert}});
+                                                                   {"active_reads", chosen.reads.size()}});
                                   finished(true, detail);
                                   network->deleteLater();
                               });

@@ -12,6 +12,8 @@ When NickelHardcover's config.ini contains a token, reading progress is sent wit
 
 Hardcover's ISBN lookup keeps literal `#`, `?` and percent characters in a sideloaded filename, and reads a store book from Nickel's kepub directory.
 
+Hardcover progress updates only an existing single unfinished read. It skips missing or ambiguous reads rather than creating another. Kobalt no longer runs NickelHardcover's update command because it can create reads; NickelHardcover can still create or select a read through its own sync and menus.
+
 ## v1.0-beta.3
 
 ### What's changed
