@@ -8,4 +8,4 @@ Tap the left edge for the previous page and the right edge for the next. The pap
 
 ## Run
 
-Open `KobaltNative.xcodeproj` in Xcode 15 or later, select your team, and run it on an iPad. The deployment target is iOS 17. This repository does not include a build; it has to be compiled on a Mac.
+Open `KobaltNative.xcodeproj` in Xcode 26 or later, select your team, and run it on an iPad. The deployment target is iOS 26, so it will not install on earlier systems. This repository does not include a build; it has to be compiled on a Mac.
