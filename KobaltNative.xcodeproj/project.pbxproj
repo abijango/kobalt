@@ -1,0 +1,316 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000065 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000064 /* App.swift */; };
+		A10000000000000000000067 /* Book.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000066 /* Book.swift */; };
+		A10000000000000000000069 /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000068 /* ReaderView.swift */; };
+		A1000000000000000000006B /* chapter1.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000006A /* chapter1.xhtml */; };
+		A1000000000000000000006D /* chapter2.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000006C /* chapter2.xhtml */; };
+		A1000000000000000000006F /* chapter3.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000006E /* chapter3.xhtml */; };
+		A10000000000000000000071 /* chapter4.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000070 /* chapter4.xhtml */; };
+		A10000000000000000000073 /* chapter5.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000072 /* chapter5.xhtml */; };
+		A10000000000000000000075 /* chapter6.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000074 /* chapter6.xhtml */; };
+		A10000000000000000000077 /* chapter7.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000076 /* chapter7.xhtml */; };
+		A10000000000000000000079 /* chapter8.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000078 /* chapter8.xhtml */; };
+		A1000000000000000000007B /* cover.png in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000007A /* cover.png */; };
+		A1000000000000000000007D /* epilogue.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000007C /* epilogue.xhtml */; };
+		A1000000000000000000007F /* prologue.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000007E /* prologue.xhtml */; };
+		A10000000000000000000081 /* title.xhtml in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000080 /* title.xhtml */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000006 /* KobaltNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KobaltNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000064 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		A10000000000000000000066 /* Book.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Book.swift; sourceTree = "<group>"; };
+		A10000000000000000000068 /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
+		A1000000000000000000006A /* chapter1.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter1.xhtml; sourceTree = "<group>"; };
+		A1000000000000000000006C /* chapter2.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter2.xhtml; sourceTree = "<group>"; };
+		A1000000000000000000006E /* chapter3.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter3.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000070 /* chapter4.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter4.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000072 /* chapter5.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter5.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000074 /* chapter6.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter6.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000076 /* chapter7.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter7.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000078 /* chapter8.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = chapter8.xhtml; sourceTree = "<group>"; };
+		A1000000000000000000007A /* cover.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = cover.png; sourceTree = "<group>"; };
+		A1000000000000000000007C /* epilogue.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = epilogue.xhtml; sourceTree = "<group>"; };
+		A1000000000000000000007E /* prologue.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = prologue.xhtml; sourceTree = "<group>"; };
+		A10000000000000000000080 /* title.xhtml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = title.xhtml; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000009 /* Book */ = {
+			isa = PBXGroup;
+			children = (
+				A1000000000000000000006A /* chapter1.xhtml */,
+				A1000000000000000000006C /* chapter2.xhtml */,
+				A1000000000000000000006E /* chapter3.xhtml */,
+				A10000000000000000000070 /* chapter4.xhtml */,
+				A10000000000000000000072 /* chapter5.xhtml */,
+				A10000000000000000000074 /* chapter6.xhtml */,
+				A10000000000000000000076 /* chapter7.xhtml */,
+				A10000000000000000000078 /* chapter8.xhtml */,
+				A1000000000000000000007A /* cover.png */,
+				A1000000000000000000007C /* epilogue.xhtml */,
+				A1000000000000000000007E /* prologue.xhtml */,
+				A10000000000000000000080 /* title.xhtml */,
+			);
+			path = Book;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000008 /* KobaltNative */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000064 /* App.swift */,
+				A10000000000000000000066 /* Book.swift */,
+				A10000000000000000000068 /* ReaderView.swift */,
+				A10000000000000000000009 /* Book */,
+			);
+			path = KobaltNative;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000007 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000008 /* KobaltNative */,
+				A10000000000000000000010 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000010 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000006 /* KobaltNative.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000002 /* KobaltNative */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000000B /* Build configuration list for PBXNativeTarget "KobaltNative" */;
+			buildPhases = (
+				A10000000000000000000003 /* Sources */,
+				A10000000000000000000005 /* Frameworks */,
+				A10000000000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KobaltNative;
+			productName = KobaltNative;
+			productReference = A10000000000000000000006 /* KobaltNative.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A10000000000000000000002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000000000000000000000A /* Build configuration list for PBXProject "KobaltNative" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000007;
+			productRefGroup = A10000000000000000000010 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000002 /* KobaltNative */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000006B /* chapter1.xhtml in Resources */,
+				A1000000000000000000006D /* chapter2.xhtml in Resources */,
+				A1000000000000000000006F /* chapter3.xhtml in Resources */,
+				A10000000000000000000071 /* chapter4.xhtml in Resources */,
+				A10000000000000000000073 /* chapter5.xhtml in Resources */,
+				A10000000000000000000075 /* chapter6.xhtml in Resources */,
+				A10000000000000000000077 /* chapter7.xhtml in Resources */,
+				A10000000000000000000079 /* chapter8.xhtml in Resources */,
+				A1000000000000000000007B /* cover.png in Resources */,
+				A1000000000000000000007D /* epilogue.xhtml in Resources */,
+				A1000000000000000000007F /* prologue.xhtml in Resources */,
+				A10000000000000000000081 /* title.xhtml in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000065 /* App.swift in Sources */,
+				A10000000000000000000067 /* Book.swift in Sources */,
+				A10000000000000000000069 /* ReaderView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1000000000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1000000000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A1000000000000000000000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = KobaltNative/Info.plist;
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
+				INFOPLIST_KEY_UIStatusBarHidden = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abijango.kobalt.native;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+
+			};
+			name = Debug;
+		};
+		A1000000000000000000000F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = KobaltNative/Info.plist;
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
+				INFOPLIST_KEY_UIStatusBarHidden = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abijango.kobalt.native;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000000000000000000000A /* Build configuration list for PBXProject "KobaltNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000000C /* Debug */,
+				A1000000000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000000000B /* Build configuration list for PBXNativeTarget "KobaltNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000000E /* Debug */,
+				A1000000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
