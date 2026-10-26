@@ -85,7 +85,7 @@ The APK is `build/android-HOST/android-build/build/outputs/apk/debug/android-bui
 
 ## iOS
 
-Personal device builds use the iOS Qt 6.11.3 kit, with the macOS Qt 6.11.3 kit as the host tools for `moc` and the other code generators. Install both from the Qt installer, plus Xcode 15 or later. Qt 6.11's minimum iOS version is 17. This target sideloads onto your own iPhone or iPad. It is not an App Store build, and the iOS Simulator is not configured.
+Personal device builds use the iOS Qt 6.11.3 kit, with the macOS Qt 6.11.3 kit as the host tools for `moc` and the other code generators. Install both from the Qt installer, plus Xcode 26 or later. The app requires iOS 26. This target sideloads onto your own iPhone or iPad. It is not an App Store build, and the iOS Simulator is not configured.
 
 The first configuration needs network access. It downloads the pinned third-party sources, then cross-compiles them for the iOS SDK. Run these commands from `platforms/ios/`:
 
@@ -99,7 +99,7 @@ cmake --build --preset ios
 The iOS kit's `qt-cmake` selects the same toolchain. Use it if the preset cannot see `QT_IOS_ROOT`:
 
 ```sh
-"$QT_IOS_ROOT/bin/qt-cmake" -S . -B ../../build/ios -G Xcode -DQT_HOST_PATH="$QT_HOST_PATH" -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+"$QT_IOS_ROOT/bin/qt-cmake" -S . -B ../../build/ios -G Xcode -DQT_HOST_PATH="$QT_HOST_PATH" -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
 cmake --build ../../build/ios --config Debug --target Kobalt
 ```
 

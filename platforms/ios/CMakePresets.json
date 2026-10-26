@@ -11,7 +11,7 @@
       "toolchainFile": "$env{QT_IOS_ROOT}/lib/cmake/Qt6/qt.toolchain.cmake",
       "cacheVariables": {
         "QT_HOST_PATH": "$env{QT_HOST_PATH}",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "17.0",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_OSX_SYSROOT": "iphoneos"
       }
