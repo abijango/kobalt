@@ -15,6 +15,32 @@ endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/manifest.json" manifest)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS manifest.json crengine-patches.txt)
 
+# Resolve the iOS SDK before the dependency identity is hashed. FriBidi and
+# libunibreak reject an ios host triple, so later steps compile them as Darwin
+# objects against this sysroot instead.
+set(kobalt_ios_sdk "")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "17.0")
+    endif()
+    if(NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES arm64)
+    endif()
+    set(ios_sysroot "${CMAKE_OSX_SYSROOT}")
+    if(NOT ios_sysroot)
+        set(ios_sysroot iphoneos)
+    endif()
+    if(ios_sysroot STREQUAL "iphoneos" OR ios_sysroot STREQUAL "iphonesimulator")
+        execute_process(COMMAND xcrun --sdk "${ios_sysroot}" --show-sdk-path
+            OUTPUT_VARIABLE kobalt_ios_sdk OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE ios_sdk_result)
+        if(NOT ios_sdk_result EQUAL 0 OR NOT kobalt_ios_sdk)
+            message(FATAL_ERROR "xcrun could not resolve the ${ios_sysroot} SDK. Install Xcode and run it once.")
+        endif()
+    else()
+        set(kobalt_ios_sdk "${ios_sysroot}")
+    endif()
+endif()
+
 # A configured build tree belongs to one SDK and compiler. A different identity
 # gets new output, rather than reusing objects compiled with old flags.
 set(identity "${CMAKE_C_COMPILER};${CMAKE_C_COMPILER_ID};${CMAKE_C_COMPILER_VERSION};${CMAKE_CXX_COMPILER};${CMAKE_CXX_COMPILER_VERSION};${CMAKE_SYSTEM_NAME};${CMAKE_SYSTEM_PROCESSOR};${CMAKE_OSX_DEPLOYMENT_TARGET};${CMAKE_OSX_ARCHITECTURES};${CMAKE_C_FLAGS};${CMAKE_CXX_FLAGS};${Qt6_DIR};${Qt6_VERSION};${Qt5_DIR};${Qt5_VERSION};${CMAKE_TOOLCHAIN_FILE};${ANDROID_NDK};${ANDROID_ABI};${ANDROID_PLATFORM};${KOBALT_SDK_ID}")
@@ -42,8 +68,19 @@ set(common -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
     "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}" "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
     "-DPKG_CONFIG_EXECUTABLE=${KOBALT_HOST_PKG_CONFIG}" "-DCMAKE_FIND_ROOT_PATH=${prefix}")
 if(APPLE)
-    list(APPEND common "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-        "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_SYSTEM_PROCESSOR}")
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        list(APPEND common "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+            "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}" -DCMAKE_SYSTEM_NAME=iOS
+            "-DCMAKE_OSX_SYSROOT=${kobalt_ios_sdk}"
+            "-DZLIB_LIBRARY=${kobalt_ios_sdk}/usr/lib/libz.tbd"
+            "-DZLIB_INCLUDE_DIR=${kobalt_ios_sdk}/usr/include")
+        if(QT_HOST_PATH)
+            list(APPEND common "-DQT_HOST_PATH=${QT_HOST_PATH}")
+        endif()
+    else()
+        list(APPEND common "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+            "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
 endif()
 if(CMAKE_TOOLCHAIN_FILE)
     list(APPEND common "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
@@ -61,6 +98,9 @@ endif()
 set(environment --unset=PKG_CONFIG_SYSROOT_DIR "PKG_CONFIG_PATH=${pkgconfig}" "PKG_CONFIG_LIBDIR=${pkgconfig}")
 if(APPLE)
     list(APPEND environment "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        list(APPEND environment "IPHONEOS_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif()
 endif()
 
 function(kobalt_source name)
@@ -122,6 +162,13 @@ set(host)
             set(host --host=aarch64-linux-android)
             string(APPEND cc " --target=${CMAKE_C_COMPILER_TARGET}")
             string(APPEND cflags " --sysroot=${CMAKE_SYSROOT}")
+        elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+            # config.sub in the pinned FriBidi and libunibreak releases has no ios triple.
+            # A different --build stops configure from running the iOS test binaries on the Mac.
+            set(host --host=aarch64-apple-darwin --build=x86_64-apple-darwin)
+            set(ios_flags "-arch ${CMAKE_OSX_ARCHITECTURES} -isysroot ${kobalt_ios_sdk} -miphoneos-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+            string(APPEND cc " ${ios_flags}")
+            string(APPEND cflags " ${ios_flags}")
         elseif(CMAKE_CROSSCOMPILING)
             set(host --host=arm-linux-gnueabihf)
             if(CMAKE_SYSROOT)
@@ -165,9 +212,9 @@ if(APPLE)
 endif()
 kobalt_source(crengine ${engine_options} PATCHES ${engine_patches})
 
-# Reuse libpng from the installed Mac Qt SDK. Other targets use their SDK's
-# libpng or a pinned source build; Qt itself is never configured here.
-if(APPLE)
+# Reuse libpng from the installed Mac Qt SDK. iOS and Android build the pinned
+# source. Other targets use their SDK's libpng. Qt itself is never configured here.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     get_filename_component(qt "${Qt6_DIR}/../../.." ABSOLUTE)
     set(png "${qt}/lib/libQt6BundledLibpng.a")
     set(png_include "${qt}/include/QtPng")
@@ -179,13 +226,13 @@ if(APPLE)
     file(MAKE_DIRECTORY "${prefix}/lib/pkgconfig")
     file(CONFIGURE OUTPUT "${prefix}/lib/pkgconfig/libpng.pc" CONTENT
         "Name: libpng\nDescription: libpng from the installed Qt SDK\nVersion: ${png_version}\nLibs: ${png} -lz\nCflags: -I${png_include}\n" @ONLY)
-elseif(ANDROID)
+elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     kobalt_source(libpng)
     kobalt_library(libpng ARCHIVE libpng16.a OPTIONS -DPNG_SHARED=OFF -DPNG_STATIC=ON
         -DPNG_TESTS=OFF -DPNG_TOOLS=OFF)
     set(png "${prefix}/lib/libpng16.a")
     set(png_include "${prefix}/include")
-set(png_dependency dep-libpng)
+    set(png_dependency dep-libpng)
 else()
     # Keep Kobo on the same libpng ABI as its prepared Qt SDK.
     find_package(PNG REQUIRED)

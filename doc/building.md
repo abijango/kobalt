@@ -83,6 +83,28 @@ The launcher pins the released image by digest. Set `KOBALT_ANDROID_IMAGE` only 
 
 The APK is `build/android-HOST/android-build/build/outputs/apk/debug/android-build-debug.apk`. It uses `com.nicoverbruggen.kobalt.debug`, the public debug key under `platforms/android/app/` and a version ending in `-debug`. Android 9 or later and ARM64 are required. Release signing uses the explicit mode described below. BOOX selects Qt's SurfaceView container before creating windows so firmware refresh metadata can reach the submitted buffers. Other Android devices keep Qt's default container. Library, book-opening and reader canvases share the BOOX frame transport. Returning to the Library retains a captured reader frame until its final system-bar insets are ready, then requests GC cleanup. The Android window follows the activity's laid-out bounds at startup and after rotation. Only the Library canvas draws rules below Android's status bar and above its navigation controls; the fullscreen reader has neither rule.
 
+## iOS
+
+Personal device builds use the iOS Qt 6.11.3 kit, with the macOS Qt 6.11.3 kit as the host tools for `moc` and the other code generators. Install both from the Qt installer, plus Xcode 15 or later. Qt 6.11's minimum iOS version is 17. This target sideloads onto your own iPhone or iPad. It is not an App Store build, and the iOS Simulator is not configured.
+
+The first configuration needs network access. It downloads the pinned third-party sources, then cross-compiles them for the iOS SDK. Run these commands from `platforms/ios/`:
+
+```sh
+export QT_IOS_ROOT="$HOME/Qt/6.11.3/ios"
+export QT_HOST_PATH="$HOME/Qt/6.11.3/macos"
+cmake --preset ios
+cmake --build --preset ios
+```
+
+The iOS kit's `qt-cmake` selects the same toolchain. Use it if the preset cannot see `QT_IOS_ROOT`:
+
+```sh
+"$QT_IOS_ROOT/bin/qt-cmake" -S . -B ../../build/ios -G Xcode -DQT_HOST_PATH="$QT_HOST_PATH" -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0
+cmake --build ../../build/ios --config Debug --target Kobalt
+```
+
+The app is `build/ios/Debug-iphoneos/Kobalt.app`. Launching it opens the bundled public-domain Type Tester book fullscreen in the shared reader. Front light, dictionary, hardware page buttons and library import are stubs. iPadOS owns rotation, and there is no e-paper refresh. Leaving the app checkpoints the open book. An empty `KOBALT_IOS_DEVELOPMENT_TEAM` leaves the Xcode project unsigned, which is enough to compile for the generic iOS destination. To install on a device, configure with `-DKOBALT_IOS_DEVELOPMENT_TEAM=<TEAMID>` and pass `-allowProvisioningUpdates` to `xcodebuild`.
+
 ## Dependencies and validation
 
 CREngine and its text/image libraries use the versions and patches recorded in this worktree. Android also builds OpenSSL and downloads the pinned BOOX compatibility JAR. These application dependencies are separate from Qt SDK production. Build directories are separated by compiler, SDK, source manifest and recipe identity. This initial setup invalidates the dependency set when its recipes, patches or source pins change; application-only changes reuse it.

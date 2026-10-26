@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 22, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "ios",
+      "displayName": "iOS device",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/../../build/ios",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "toolchainFile": "$env{QT_IOS_ROOT}/lib/cmake/Qt6/qt.toolchain.cmake",
+      "cacheVariables": {
+        "QT_HOST_PATH": "$env{QT_HOST_PATH}",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "17.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_SYSROOT": "iphoneos"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "ios", "configurePreset": "ios", "configuration": "Debug", "targets": ["Kobalt"], "jobs": 2 }
+  ]
+}
