@@ -1,0 +1,162 @@
+#include "services.h"
+#include "interfaces/reader/ui/style/fonts.h"
+#include <QGuiApplication>
+#include <QDesktopServices>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QPointer>
+#include <QTime>
+
+namespace kobalt::ios {
+namespace {
+class Light final : public LightControls {
+public:
+    bool initialize() override {
+        return false;
+    }
+    bool hasWarmth() const override {
+        return false;
+    }
+    int warmth() const override {
+        return 0;
+    }
+    int warmthMinimum() const override {
+        return 0;
+    }
+    int warmthMaximum() const override {
+        return 0;
+    }
+    int warmthStep() const override {
+        return 1;
+    }
+    bool automaticWarmth() const override {
+        return false;
+    }
+    int setWarmth(int) override {
+        return 0;
+    }
+    bool saveWarmth() override {
+        return false;
+    }
+    bool setAutomaticWarmth(bool) override {
+        return false;
+    }
+    bool beginGesture() override {
+        return false;
+    }
+    int setGestureLevel(int) override {
+        return 0;
+    }
+    void finishGesture(bool) override {}
+    int brightness() const override {
+        return 0;
+    }
+    bool gesturing() const override {
+        return false;
+    }
+};
+class Dictionary final : public DictionaryService {
+public:
+    QVector<DictionaryChoice> choices() const override {
+        return {};
+    }
+    bool select(const QString &, const QString &, QString *error) override {
+        if (error)
+            *error = QStringLiteral("No dictionary installed.");
+        return false;
+    }
+    DictionaryResult lookup(const QString &, const QString &word) override {
+        DictionaryResult result;
+        result.word = word;
+        result.error = QStringLiteral("No dictionary installed.");
+        return result;
+    }
+};
+class Keyboard final : public KeyboardController {
+public:
+    explicit Keyboard(QLineEdit *editor) : editor(editor) {}
+    bool show() override {
+        if (!editor)
+            return false;
+        editor->setFocus();
+        QGuiApplication::inputMethod()->show();
+        return true;
+    }
+    void hide() override {
+        QGuiApplication::inputMethod()->hide();
+    }
+    void place() override {}
+
+private:
+    QPointer<QLineEdit> editor;
+};
+class Presentation final : public WindowPresentation {
+public:
+    void pauseBackground(bool) override {}
+    void resumeBackground() override {}
+    void resumeAndRepaintBackground() override {}
+    void acceptHandoff(QDialog &, const std::function<void()> &accept) override {
+        accept();
+    }
+};
+}
+ReaderHostServices readerServices() {
+    ReaderHostServices result;
+    result.colorDisplay = [] {
+        return true;
+    };
+    // iPadOS rotates the window. The reader does not try to rotate it itself.
+    result.systemRotation = true;
+    result.browserAvailable = [] {
+        return true;
+    };
+    result.openBrowser = [](const QUrl &url, QWidget *) {
+        return url.isValid() && !url.host().isEmpty() && (url.scheme() == "http" || url.scheme() == "https") &&
+               QDesktopServices::openUrl(url);
+    };
+    result.clock = [] {
+        return QTime::currentTime().toString("HH:mm");
+    };
+    result.battery = [] {
+        return BatteryStatus{};
+    };
+    result.pageButtons = [] {
+        return false;
+    };
+    result.reverseLandscapeButtons = [] {
+        return false;
+    };
+    result.pageButtonDirection = [](QKeyEvent *) {
+        return 0;
+    };
+    result.fontFamilies = [] {
+        return QStringList{};
+    };
+    result.uiFont = [] {
+        return ui::interfaceFont();
+    };
+    result.suspended = [] {
+        return QGuiApplication::applicationState() != Qt::ApplicationActive;
+    };
+    result.lightAvailable = [] {
+        return false;
+    };
+    result.animationsAvailable = [] {
+        return false;
+    };
+    result.cancelAnimation = [] {};
+    result.light = [](QWidget *) {
+        return std::make_unique<Light>();
+    };
+    result.dictionary = [] {
+        return std::make_unique<Dictionary>();
+    };
+    result.keyboard = [](QWidget *, QLineEdit *editor) {
+        return std::make_unique<Keyboard>(editor);
+    };
+    result.presentation = [](QWidget *) {
+        return std::make_unique<Presentation>();
+    };
+    return result;
+}
+}
