@@ -533,7 +533,8 @@ bool ReadingBook::writeNative(const QString &location, const QString &mappingErr
         error = strings::get("error.nickel_save_deferred_while_progress_or_device_state_is_unresolved");
     nativeWritebackError = error;
     diagnostic("native-save",
-               {{"result", nativeWriteback}, {"mapping_failed", timeOnly}, {"failed", !error.isEmpty()}},
+               {{"result", nativeWriteback}, {"mapping_failed", timeOnly}, {"failed", !error.isEmpty()},
+                {"error", error}},
                error.isEmpty() ? DiagnosticSeverity::Activity : DiagnosticSeverity::Error);
     return true;
 }
