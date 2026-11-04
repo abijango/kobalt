@@ -309,6 +309,30 @@ QString sourcePoint(ldomDocument *doc, const QString &path, ldomNode *fragment, 
     steps.prepend(QStringLiteral("1"));
     return QStringLiteral("point(/") + steps.join('/') + ':' + QString::number(bytes) + ')';
 }
+// A page can start at an element boundary, such as an empty anchor before a
+// chapter heading. Nickel's locations name text, so use the first visible text
+// at or after that boundary in the same chapter. Returns null when none follows.
+ldomNode *followingText(ldomNode *fragment, ldomNode *element, int offset) {
+    // The next node in document order after `node`'s subtree, inside the chapter.
+    const auto after = [fragment](ldomNode *node) -> ldomNode * {
+        for (; node && node != fragment; node = node->getParentNode()) {
+            auto *parent = node->getParentNode();
+            const int next = parent ? node->getNodeIndex() + 1 : 0;
+            if (parent && next < int(parent->getChildCount()))
+                return parent->getChildNode(next);
+        }
+        return nullptr;
+    };
+    auto *node = offset < 0 ? element
+                 : offset < int(element->getChildCount()) ? element->getChildNode(offset)
+                                                           : after(element);
+    while (node) {
+        if (node->isText() && !qstring(node->getText()).trimmed().isEmpty())
+            return node;
+        node = node->isElement() && node->getChildCount() > 0 ? node->getChildNode(0) : after(node);
+    }
+    return nullptr;
+}
 // Counts the UTF-16 units of `element`'s text before `target` at `offset`.
 bool unitsBefore(ldomNode *element, ldomNode *target, int offset, int &units, QString *error) {
     units = 0;
@@ -326,8 +350,9 @@ bool unitsBefore(ldomNode *element, ldomNode *target, int offset, int &units, QS
                 for (int i = 0; i < offset; ++i)
                     units += text[i] > 0xffff ? 2 : 1;
             } else {
-                // An element XPointer counts children, not characters.
-                if (offset < 0 || offset > node->getChildCount()) {
+                // An element XPointer counts children, not characters. CREngine
+                // writes the element itself, without an offset, as -1.
+                if (offset < -1 || offset > node->getChildCount()) {
                     if (error)
                         *error = strings::get("error.invalid_source_element_offset");
                     return false;
@@ -540,14 +565,21 @@ QString NickelPositionCodec::encode(const ReaderModel &model, QString *error) {
         }
         return encodedPath;
     };
-    if (target == fragment && pointer.getOffset() == 0)
+    int offset = pointer.getOffset();
+    if (target == fragment && offset <= 0)
         return encodedPath;
+    if (target->isElement()) {
+        if (auto *text = followingText(fragment, target, offset)) {
+            target = text;
+            offset = 0;
+        }
+    }
     const auto prefix = qstring(fragment->getAttributeValue("id")) + "_ ";
     // Without an ID, store Nickel's own DOM point for the nearest element.
     const auto structuralPoint = [&]() -> QString {
         auto *nearest = target->isText() ? target->getParentNode() : target;
         int units = 0;
-        if (!nearest || nearest == fragment || !unitsBefore(nearest, target, pointer.getOffset(), units, nullptr))
+        if (!nearest || nearest == fragment || !unitsBefore(nearest, target, offset, units, nullptr))
             return chapterFallback();
         const auto point = sourcePoint(doc, path, fragment, nearest, units);
         return point.isEmpty() ? chapterFallback() : encodedPath + '#' + point;
@@ -569,7 +601,7 @@ QString NickelPositionCodec::encode(const ReaderModel &model, QString *error) {
         return textChanged ? chapterFallback() : QString();
     }
     int units = 0;
-    if (!unitsBefore(element, target, pointer.getOffset(), units, error))
+    if (!unitsBefore(element, target, offset, units, error))
         return {};
     return encodedPath + '#' + QString::fromLatin1(QUrl::toPercentEncoding(id)) + ':' + QString::number(units);
 }
