@@ -22,6 +22,23 @@ void waitFor(const std::function<bool()> &ready) {
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     {
+        // Committed reading time moves an older last-read time forward, in
+        // whole UTC seconds, whether Nickel stored it as text or as a date.
+        const qint64 now = QDateTime::fromString("2026-11-04T10:52:03Z", Qt::ISODate).toMSecsSinceEpoch() + 255;
+        using kobalt::nickel::readingTimeLastRead;
+        require(readingTimeLastRead(QStringLiteral("2026-11-03T06:23:43Z"), now) == "2026-11-04T10:52:03Z",
+                "Committed reading time left the last-read time at an older position save");
+        require(readingTimeLastRead(QDateTime::fromString("2026-11-03T06:23:43Z", Qt::ISODate), now) ==
+                    "2026-11-04T10:52:03Z",
+                "A stored date value was not moved forward");
+        require(readingTimeLastRead(QVariant(), now) == "2026-11-04T10:52:03Z" &&
+                    readingTimeLastRead(QStringLiteral("not a date"), now) == "2026-11-04T10:52:03Z",
+                "A missing last-read time was not set");
+        require(readingTimeLastRead(QStringLiteral("2026-11-04T10:52:03Z"), now).isEmpty() &&
+                    readingTimeLastRead(QStringLiteral("2026-11-04T10:52:05Z"), now).isEmpty(),
+                "Committed reading time moved a current or newer last-read time backwards");
+    }
+    {
         NativeReadingTime time;
         int attempts = 0, stored = 29, verifies = 0;
         const auto commit = [&](QVariantMap &expected) {

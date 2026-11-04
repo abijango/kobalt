@@ -150,6 +150,10 @@ bool addTime(const QString &book, int seconds, nickel::NativeReadingTime &write)
         for (auto it = after.cbegin(); it != after.cend(); ++it)
             if (it.value() != before.value(it.key()))
                 changed.insert(it.key(), it.value());
+        const auto lastRead =
+            nickel::readingTimeLastRead(before.value("DateLastRead"), QDateTime::currentMSecsSinceEpoch());
+        if (!lastRead.isEmpty())
+            changed.insert("DateLastRead", lastRead);
         // A fresh Volume and a field-only update preserve incoming bookmarks.
         const bool updated = a.update(book, changed, {{"ContentID", book}}, db);
         const bool committed = a.commit(db, updated);
