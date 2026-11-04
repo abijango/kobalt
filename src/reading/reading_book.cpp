@@ -195,13 +195,17 @@ ReadingEstimates ReadingBook::estimates() const {
     return {pace_.estimate(chapterLeft, reading), pace_.estimate(model->pages() - model->page(), reading),
             pace_.estimate(0, reading) < 0};
 }
-void ReadingBook::sleepReading(const QJsonObject &preferences) {
+void ReadingBook::sleepReading(const QJsonObject &preferences, bool nativeStop) {
     if (!sleepingReading) {
         sleepingReading = true;
         sleepingAt = utc();
         sleepingTimeout = sessionTimeout::milliseconds(preferences);
     }
-    stopReading();
+    stopReading(false, nativeStop);
+}
+void ReadingBook::stopNativeReading() {
+    if (bridge)
+        bridge->stopReading();
 }
 void ReadingBook::stopReading(bool background, bool nativeAllowed) {
     if (activeReading.isValid()) {
@@ -533,7 +537,8 @@ bool ReadingBook::writeNative(const QString &location, const QString &mappingErr
         error = strings::get("error.nickel_save_deferred_while_progress_or_device_state_is_unresolved");
     nativeWritebackError = error;
     diagnostic("native-save",
-               {{"result", nativeWriteback}, {"mapping_failed", timeOnly}, {"failed", !error.isEmpty()}},
+               {{"result", nativeWriteback}, {"mapping_failed", timeOnly}, {"failed", !error.isEmpty()},
+                {"error", error}},
                error.isEmpty() ? DiagnosticSeverity::Activity : DiagnosticSeverity::Error);
     return true;
 }

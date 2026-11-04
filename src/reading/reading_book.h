@@ -53,7 +53,9 @@ public:
     void releaseNative(bool save = true);
     void observeReading(bool learnPace = true);
     void stopReading(bool background = false, bool nativeAllowed = true);
-    void sleepReading(const QJsonObject &preferences);
+    // `nativeStop` false keeps Nickel's interval open until stopNativeReading().
+    void sleepReading(const QJsonObject &preferences, bool nativeStop = true);
+    void stopNativeReading();
     void finishReading(std::function<void(bool)> done);
     bool readingSavePending() const;
     void retryFailedReadingSave();

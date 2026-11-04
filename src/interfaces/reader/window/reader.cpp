@@ -356,7 +356,12 @@ void Reader::sleepReader() {
     setEnabled(true);
     setProperty("reader_sleep_clean_pending", true);
     model->cancelPendingTurn();
-    book->sleepReading(preferences);
+    // Ending Nickel's reading session makes it write its events, and the
+    // position write does not wait for another writer. Nickel permits this
+    // write only during the sleep hook, so save it before the session ends.
+    book->sleepReading(preferences, false);
+    saveNativeProgress();
+    book->stopNativeReading();
     auto snapshot = captureSleepScreen();
     sleepOrientation = snapshot.orientation;
     sleepProgress = snapshot.progress;
@@ -371,7 +376,6 @@ void Reader::sleepReader() {
     page->animationDirection = 0;
     setProperty("reader_animation_direction", 0);
     appearanceEdit.clearContinuation();
-    saveNativeProgress();
     checkpoint();
     // Fold waiting saves into the main profile file before a long sleep.
     bookmarks->flush();

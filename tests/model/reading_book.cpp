@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QMutex>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QThread>
@@ -1011,6 +1012,30 @@ int main(int argc, char **argv) {
             require(!closeCheckpoint(), "Failed close record was accepted because the profile was synced");
             require(changeSql("DROP TRIGGER fail_close_checkpoint") && closeCheckpoint(),
                     "Failed asynchronous close checkpoint did not recover");
+            {
+                QMutex mutex;
+                QVector<QJsonObject> saves;
+                setDiagnosticObserver([&](const QJsonObject &event) {
+                    if (event.value("event") == QStringLiteral("native-save")) {
+                        QMutexLocker lock(&mutex);
+                        saves.append(event);
+                    }
+                });
+                calls.failWrite = true;
+                require(book.writeNative("position-failed-reason", {}), "Cannot fail a logged native save");
+                calls.failWrite = false;
+                require(book.writeNative({}, "unmappable store position"), "Cannot log a local-only save");
+                require(flushDiagnostics(3000), "Native save diagnostics were not written");
+                QMutexLocker lock(&mutex);
+                require(saves.size() == 2 && saves[0].value("result") == QStringLiteral("failed") &&
+                            saves[0].value("error") == QStringLiteral("synthetic write failure") &&
+                            saves[1].value("result") == QStringLiteral("local-only") &&
+                            saves[1].value("error") == QStringLiteral("unmappable store position"),
+                        "A failed native save did not log its reason");
+            }
+            require(book.writeNative("position-after-logged-failure", {}) &&
+                        book.nativeSaveResult() == ReadingBook::NativeSave::Saved && closeCheckpoint(),
+                    "Cannot restore the close baseline after logged failures");
             setDiagnosticObserver({});
             setDiagnosticsSync(true);
             storage::closeProfile();

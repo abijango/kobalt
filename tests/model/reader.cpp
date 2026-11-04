@@ -762,12 +762,75 @@ static void checkVerticalJustification() {
     }
 }
 
+// A page can start at an empty anchor before a chapter heading, as in Kobo
+// store KEPUBs. CREngine then stores the element itself, without an offset.
+static void checkElementBoundaryExport(const kobalt::PositionCodec &positions) {
+    const auto publication = [](const QByteArray &chapter) {
+        return storedEpub(
+            {{"mimetype", "application/epub+zip"},
+             {"META-INF/container.xml",
+              "<container xmlns='urn:oasis:names:tc:opendocument:xmlns:container' version='1.0'><rootfiles><rootfile full-path='book.opf' media-type='application/oebps-package+xml'/></rootfiles></container>"},
+             {"book.opf",
+              "<package xmlns='http://www.idpf.org/2007/opf' version='2.0'><metadata/><manifest><item id='c' href='c.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c'/></spine></package>"},
+             {"c.xhtml", "<html xmlns='http://www.w3.org/1999/xhtml'><head><title>Boundary</title></head><body>" + chapter +
+                             "</body></html>"}});
+    };
+    QString error;
+    const auto elementAnchor = [&](kobalt::ReaderModel &model, const QString &location) {
+        require(model.goToPlatform(positions, location, &error), qPrintable(location + ": " + error));
+        auto anchor = model.position();
+        require(anchor.endsWith(".0"), qPrintable("Empty anchor did not decode to an element start: " + anchor));
+        anchor.chop(2);
+        require(model.goTo(anchor) && model.position() == anchor, qPrintable("Cannot select element " + anchor));
+        return anchor;
+    };
+    {
+        kobalt::ReaderModel kepub(kobalt::test::readerFonts());
+        require(kepub.open(publication("<div class='book-inner'><div class='book-columns'><a id='chapter7'></a>"
+                                       "<h2 id='heading'><span class='koboSpan' id='kobo.1.1'>7: Anything Reasonable</span></h2>"
+                                       "<p><span class='koboSpan' id='kobo.2.1'>Body text follows the heading.</span></p>"
+                                       "</div></div><div><a id='tail'></a></div>"),
+                           QSize(1072, 1328), {}, &error),
+                qPrintable(error));
+        const auto anchor = elementAnchor(kepub, "c.xhtml#chapter7:0");
+        require(kepub.platformPosition(positions, &error) == "c.xhtml#kobo.1.1:0" && error.isEmpty() &&
+                    kepub.position() == anchor,
+                qPrintable("Chapter-start anchor did not map to the following text: " +
+                           kepub.platformPosition(positions, &error) + " " + error));
+        require(kepub.goTo(anchor + ".0") && kepub.platformPosition(positions, &error) == "c.xhtml#kobo.1.1:0",
+                "An element offset after the anchor's children did not map to the following text");
+        require(kepub.goToPlatform(positions, "c.xhtml#heading:0", &error), qPrintable(error));
+        const auto text = kepub.position();
+        const auto heading = text.left(text.indexOf("/span"));
+        require(heading != text && kepub.goTo(heading) &&
+                    kepub.platformPosition(positions, &error) == "c.xhtml#kobo.1.1:0",
+                "A heading element position did not map to its first text");
+        require(kepub.goToPlatform(positions, "c.xhtml#kobo.1.1:0", &error), qPrintable(error));
+        elementAnchor(kepub, "c.xhtml#tail:0");
+        require(kepub.platformPosition(positions, &error) == "c.xhtml#tail:0" && error.isEmpty(),
+                qPrintable("An anchor without following text was not saved at its element: " + error));
+    }
+    {
+        kobalt::ReaderModel plain(kobalt::test::readerFonts());
+        require(plain.open(publication("<div><a></a></div><p>Opening words.</p>"), QSize(1072, 1328), {}, &error),
+                qPrintable(error));
+        require(plain.goToPlatform(positions, "c.xhtml#point(/1/2/2/1:0)", &error), qPrintable(error));
+        const auto paragraph = plain.position();
+        auto anchor = paragraph.left(paragraph.indexOf("/p[")) + "/div[1]/a[1]";
+        require(plain.goTo(anchor), qPrintable("Cannot select the empty plain EPUB anchor " + anchor));
+        const auto location = plain.platformPosition(positions, &error);
+        require(location == "c.xhtml#point(/1/2/2/1:0)" && error.isEmpty(),
+                qPrintable("Plain EPUB anchor did not map to the following text: " + location + " " + error));
+    }
+}
+
 int main(int argc, char **argv) {
     QGuiApplication app(argc, argv);
     checkPageFormat();
     checkDeferredPublisherStyles();
     checkObfuscatedFonts();
     const auto positions = kobalt::nickel::positionCodec();
+    checkElementBoundaryExport(positions);
     const QVector<kobalt::ReadingFont> axisFixture{
         {"Variable fixture", {}, kobalt::FontOrigin::Sideloaded, {300, 650, 450}, {6.25, 72.75, 14}}};
     require(kobalt::fontWeightAxis(axisFixture, "VARIABLE FIXTURE").defaultValue == 450 &&

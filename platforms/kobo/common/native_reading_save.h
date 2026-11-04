@@ -1,6 +1,7 @@
 #pragma once
 
 #include "support/qt_compat.h"
+#include <QDateTime>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -32,6 +33,17 @@ public:
 private:
     QVariantMap expected;
 };
+// Sync servers date TimeSpentReading by the row's DateLastRead. When a reading
+// interval is committed, DateLastRead must not stay at an older position save,
+// including when that position could not be written. Returns the whole-second
+// UTC value to store, or an empty string when the stored time is not older.
+inline QString readingTimeLastRead(const QVariant &stored, qint64 nowMilliseconds) {
+    const auto now = QDateTime::fromMSecsSinceEpoch(nowMilliseconds / 1000 * 1000).toUTC();
+    auto last = stored.toDateTime();
+    if (!last.isValid())
+        last = QDateTime::fromString(stored.toString(), Qt::ISODate);
+    return last.isValid() && last >= now ? QString() : now.toString(Qt::ISODate);
+}
 // GUI-thread queue. An interval is removed only after both operations succeed.
 // The writer retains its own commit state, so retrying verification cannot add
 // the interval twice. Owners must drain active calls before releasing storage;
