@@ -195,13 +195,17 @@ ReadingEstimates ReadingBook::estimates() const {
     return {pace_.estimate(chapterLeft, reading), pace_.estimate(model->pages() - model->page(), reading),
             pace_.estimate(0, reading) < 0};
 }
-void ReadingBook::sleepReading(const QJsonObject &preferences) {
+void ReadingBook::sleepReading(const QJsonObject &preferences, bool nativeStop) {
     if (!sleepingReading) {
         sleepingReading = true;
         sleepingAt = utc();
         sleepingTimeout = sessionTimeout::milliseconds(preferences);
     }
-    stopReading();
+    stopReading(false, nativeStop);
+}
+void ReadingBook::stopNativeReading() {
+    if (bridge)
+        bridge->stopReading();
 }
 void ReadingBook::stopReading(bool background, bool nativeAllowed) {
     if (activeReading.isValid()) {
