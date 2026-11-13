@@ -1690,6 +1690,39 @@ int main(int argc, char **argv)
             require(logs.isValid(), "Cannot create close checkpoint diagnostics");
             initializeDiagnostics(logs.path());
             setDiagnosticsSync(false);
+            QJsonObject failedSave, localSave;
+            int nativeSaves = 0;
+            setDiagnosticObserver([&](const QJsonObject &event) {
+                if (event.value(QStringLiteral("event")) != QStringLiteral("native-save"))
+                    return;
+                if (nativeSaves == 0)
+                    failedSave = event;
+                else if (nativeSaves == 1)
+                    localSave = event;
+                ++nativeSaves;
+            });
+            const auto position =
+                    book.session()->state().value(QStringLiteral("position")).toString();
+            calls.failWrite = true;
+            require(book.writeNative(QStringLiteral("position-failed-reason"), {}).failed(),
+                    "Cannot fail a logged native save");
+            calls.failWrite = false;
+            require(book.writeNative({}, QStringLiteral("unmappable store position")).status()
+                            == NativeSaveResult::Status::LocalOnly,
+                    "Cannot log a local-only save");
+            calls.failWrite = true;
+            require(nativeSaves == 2
+                            && failedSave.value(QStringLiteral("result")) == QStringLiteral("failed")
+                            && failedSave.value(QStringLiteral("error"))
+                                    == QStringLiteral("synthetic write failure")
+                            && failedSave.value(QStringLiteral("position")).toString() == position
+                            && localSave.value(QStringLiteral("result"))
+                                    == QStringLiteral("local-only")
+                            && localSave.value(QStringLiteral("mapping_failed")) == true
+                            && localSave.value(QStringLiteral("error"))
+                                    == QStringLiteral("unmappable store position")
+                            && localSave.value(QStringLiteral("position")).toString() == position,
+                    "A failed native save did not log its reason and position");
             std::atomic<int> checkpoints{ 0 };
             setDiagnosticObserver([&](const QJsonObject &event) {
                 if (event.value("event") == QStringLiteral("profile-checkpoint"))

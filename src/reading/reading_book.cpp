@@ -774,10 +774,16 @@ NativeSaveResult ReadingBook::writeNative(const QString &location, const QString
                 "error.nickel_save_deferred_while_progress_or_device_state_is_unresolved");
         nativeWriteback = NativeSaveResult::deferred(error);
     }
-    diagnostic("native-save",
-               { { "result", nativeWriteback.diagnosticName() },
-                 { "mapping_failed", timeOnly },
-                 { "failed", !error.isEmpty() } },
+    auto fields = qt::object({ { "result", nativeWriteback.diagnosticName() },
+                                { "mapping_failed", timeOnly },
+                                { "failed", !error.isEmpty() } });
+    if (!error.isEmpty()) {
+        fields.insert(QStringLiteral("error"), error);
+        const auto position = session_->state().value(QStringLiteral("position")).toString();
+        if (!position.isEmpty())
+            fields.insert(QStringLiteral("position"), position);
+    }
+    diagnostic("native-save", fields,
                error.isEmpty() ? DiagnosticSeverity::Activity : DiagnosticSeverity::Error);
     return nativeSaveResult();
 }
