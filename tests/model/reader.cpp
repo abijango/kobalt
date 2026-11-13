@@ -1013,6 +1013,87 @@ static void checkVerticalJustification()
     }
 }
 
+// A store KEPUB can open a chapter on an empty anchor before chapter art.
+// CREngine stores that element with no child index. Nickel needs the next
+// kobo span, or the chapter start when the chapter has no later span.
+static void checkElementBoundaryExport(const kobalt::PositionCodec &positions)
+{
+    const auto publication = [](const QByteArray &chapter) {
+        return storedEpub(
+                { { "mimetype", "application/epub+zip" },
+                  { "META-INF/container.xml",
+                    "<container xmlns='urn:oasis:names:tc:opendocument:xmlns:container' version='1.0'><rootfiles><rootfile full-path='book.opf' media-type='application/oebps-package+xml'/></rootfiles></container>" },
+                  { "book.opf",
+                    "<package xmlns='http://www.idpf.org/2007/opf' version='2.0'><metadata/><manifest><item id='c' href='c.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c'/></spine></package>" },
+                  { "c.xhtml",
+                    "<html xmlns='http://www.w3.org/1999/xhtml'><head><title>Boundary</title></head><body>"
+                            + chapter + "</body></html>" } });
+    };
+    QString error;
+    // filepos:0 decodes to the element. Drop a trailing ".0" so the position
+    // is the offset-less element XPointer the device saves.
+    const auto selectElement = [](kobalt::EngineDocument &model, QString anchor) {
+        require(anchor.contains("/a[1]") && !anchor.contains("text()"),
+                qPrintable("Empty anchor did not decode to an element: " + anchor));
+        if (anchor.endsWith(QLatin1String(".0")))
+            anchor.chop(2);
+        require(model.goTo(anchor) && model.position() == anchor,
+                qPrintable("Cannot select element " + anchor + " got " + model.position()));
+        return anchor;
+    };
+    {
+        kobalt::EngineDocument kepub(kobalt::test::readerFonts());
+        require(kepub.open(publication("<div class='book-inner'><div class='book-columns'>"
+                                       "<a id='filepos1' class='calibre14'></a>"
+                                       "<p><span class='koboSpan' id='kobo.1.1'><img alt=''/></span></p>"
+                                       "<h2 id='heading'><span class='koboSpan' id='kobo.2.1'>Opening</span></h2>"
+                                       "<p><span class='koboSpan' id='kobo.3.1'>Body follows the art.</span></p>"
+                                       "</div></div><div><a id='tail'></a></div>"),
+                           QSize(1072, 1328), {}, &error),
+                qPrintable(error));
+        require(kepub.goToPlatform(positions, "c.xhtml#filepos1:0", &error), qPrintable(error));
+        const auto anchor = selectElement(kepub, kepub.position());
+        require(kepub.platformPosition(positions, &error) == "c.xhtml#kobo.1.1:0" && error.isEmpty()
+                        && kepub.position() == anchor,
+                qPrintable("Chapter-art anchor did not map to the next kobo span: "
+                           + kepub.platformPosition(positions, &error) + " " + error));
+        require(kepub.goToPlatform(positions, "c.xhtml#kobo.2.1:0", &error)
+                        && kepub.platformPosition(positions, &error) == "c.xhtml#kobo.2.1:0",
+                "A text position inside a kobo span did not round-trip");
+        require(kepub.goToPlatform(positions, "c.xhtml#kobo.3.1:5", &error)
+                        && kepub.platformPosition(positions, &error) == "c.xhtml#kobo.3.1:5",
+                "A text offset inside a later kobo span did not round-trip");
+        require(kepub.goToPlatform(positions, "c.xhtml#heading:0", &error), qPrintable(error));
+        const auto text = kepub.position();
+        const auto heading = text.left(text.indexOf("/span"));
+        require(heading != text && kepub.goTo(heading) && kepub.position() == heading
+                        && kepub.platformPosition(positions, &error) == "c.xhtml#kobo.2.1:0",
+                qPrintable("A heading element did not map to its kobo span: " + heading + " "
+                           + kepub.platformPosition(positions, &error) + " " + error));
+        require(kepub.goToPlatform(positions, "c.xhtml#tail:0", &error), qPrintable(error));
+        const auto tail = selectElement(kepub, kepub.position());
+        require(kepub.platformPosition(positions, &error) == "c.xhtml" && error.isEmpty()
+                        && kepub.position() == tail,
+                qPrintable("A KEPUB anchor with no later span did not keep the chapter start: "
+                           + kepub.platformPosition(positions, &error) + " " + error));
+    }
+    {
+        kobalt::EngineDocument image(kobalt::test::readerFonts());
+        require(image.open(publication("<div id='book-columns'><div id='book-inner'>"
+                                       "<a id='filepos1'></a>"
+                                       "<p><span class='koboSpan' id='kobo.1.1'><img alt=''/></span></p>"
+                                       "</div></div>"),
+                           QSize(1072, 1328), {}, &error),
+                qPrintable(error));
+        require(image.goToPlatform(positions, "c.xhtml#filepos1:0", &error), qPrintable(error));
+        const auto anchor = selectElement(image, image.position());
+        require(image.platformPosition(positions, &error) == "c.xhtml#kobo.1.1:0" && error.isEmpty()
+                        && image.position() == anchor,
+                qPrintable("An image-only chapter did not map to its kobo span: "
+                           + image.platformPosition(positions, &error) + " " + error));
+    }
+}
+
 // Checks the restored reader assertions: rendering, embedded fonts, Bold Reading, variable axes, source positions and previews.
 int main(int argc, char **argv)
 {
@@ -1021,6 +1102,7 @@ int main(int argc, char **argv)
     checkDeferredPublisherStyles();
     checkObfuscatedFonts();
     const auto positions = kobalt::nickel::positionCodec();
+    checkElementBoundaryExport(positions);
     const QVector<kobalt::ReadingFont> axisFixture{ { "Variable fixture",
                                                       {},
                                                       kobalt::FontOrigin::Sideloaded,

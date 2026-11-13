@@ -367,6 +367,70 @@ QString sourcePoint(ldomDocument *doc, const QString &path, ldomNode *fragment, 
     return QStringLiteral("point(/") + steps.join('/') + ':' + QString::number(bytes) + ')';
 }
 
+// CREngine stores an element id as "<fragment>_ <source id>".
+QString sourceId(ldomNode *fragment, ldomNode *node)
+{
+    if (!node->isElement())
+        return {};
+    const auto prefix = qstring(fragment->getAttributeValue("id")) + "_ ";
+    const auto id = qstring(node->getAttributeValue("id"));
+    return id.startsWith(prefix) ? id.mid(prefix.size()) : QString();
+}
+
+bool koboSpanId(const QString &id)
+{
+    return id.startsWith(QLatin1String("kobo."));
+}
+
+// The next kobo.N.M element in document order, including descendants of
+// `element`. Store chapters name progress with these spans.
+ldomNode *nextKoboSpan(ldomNode *fragment, ldomNode *element)
+{
+    const auto after = [fragment](ldomNode *node) -> ldomNode * {
+        for (; node && node != fragment; node = node->getParentNode()) {
+            auto *parent = node->getParentNode();
+            if (!parent)
+                return nullptr;
+            const int count = parent->getChildCount();
+            int index = -1;
+            for (int i = 0; i < count; ++i) {
+                if (parent->getChildNode(i) == node) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index >= 0 && index + 1 < count)
+                return parent->getChildNode(index + 1);
+        }
+        return nullptr;
+    };
+    auto *node = element->getChildCount() > 0 ? element->getChildNode(0) : after(element);
+    while (node) {
+        if (koboSpanId(sourceId(fragment, node)))
+            return node;
+        node = node->isElement() && node->getChildCount() > 0 ? node->getChildNode(0) : after(node);
+    }
+    return nullptr;
+}
+
+// A KEPUB chapter carries kobo spans or Nickel's book-inner / book-columns ids.
+bool kepubFragment(ldomNode *fragment)
+{
+    QVector<ldomNode *> pending{ fragment };
+    while (!pending.isEmpty()) {
+        auto *node = pending.takeLast();
+        if (!node->isElement())
+            continue;
+        const auto id = sourceId(fragment, node);
+        if (koboSpanId(id) || id == QLatin1String("book-inner")
+            || id == QLatin1String("book-columns"))
+            return true;
+        for (int i = node->getChildCount() - 1; i >= 0; --i)
+            pending.append(node->getChildNode(i));
+    }
+    return false;
+}
+
 // Counts the UTF-16 units of `element`'s text before `target` at `offset`.
 bool unitsBefore(ldomNode *element, ldomNode *target, int offset, int &units, QString *error)
 {
@@ -636,6 +700,21 @@ QString NickelPositionCodec::encode(const EngineDocument &engine, QString *error
     };
     if (target == fragment && pointer.getOffset() == 0)
         return encodedPath;
+    int offset = pointer.getOffset();
+    // CREngine stores the element itself, with no child index, as offset -1.
+    // unitsBefore() rejects that. An empty filepos anchor before chapter art
+    // still has an id, so its text matches and the kobo-span fallback below
+    // never runs. Point Nickel at the next kobo span, or the chapter start.
+    if (target->isElement() && target != fragment && offset < 0) {
+        if (koboSpanId(sourceId(fragment, target))) {
+            offset = 0;
+        } else if (ldomNode *span = nextKoboSpan(fragment, target)) {
+            target = span;
+            offset = 0;
+        } else if (kepubFragment(fragment)) {
+            return chapterFallback();
+        }
+    }
     const auto prefix = qstring(fragment->getAttributeValue("id")) + "_ ";
     // Without an ID, store Nickel's own DOM point for the nearest element.
     const auto structuralPoint = [&]() -> QString {
@@ -645,10 +724,10 @@ QString NickelPositionCodec::encode(const EngineDocument &engine, QString *error
         auto *nearest = target->isText() ? target->getParentNode() : target;
         int units = 0;
         if (!nearest || nearest == fragment
-            || !unitsBefore(nearest, target, pointer.getOffset(), units, nullptr))
+            || !unitsBefore(nearest, target, offset, units, nullptr))
             return chapter;
-        const bool textEnd = target->isText() && pointer.getOffset() > 0
-                && pointer.getOffset() == target->getText().length();
+        const bool textEnd =
+                target->isText() && offset > 0 && offset == target->getText().length();
         const auto point = sourcePoint(doc, path, fragment, nearest, units, textEnd);
         return point.isEmpty() ? chapter : chapter + '#' + point;
     };
@@ -681,7 +760,7 @@ QString NickelPositionCodec::encode(const EngineDocument &engine, QString *error
         return structuralPoint();
     }
     int units = 0;
-    if (!unitsBefore(element, target, pointer.getOffset(), units, error))
+    if (!unitsBefore(element, target, offset, units, error))
         return {};
     return encodedPath + '#' + QString::fromLatin1(QUrl::toPercentEncoding(id)) + ':'
             + QString::number(units);
